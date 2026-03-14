@@ -58,8 +58,20 @@ st.markdown("""
 }
 
 /* ── Hide Streamlit UI ── */
-#MainMenu, footer, header, .stDeployButton { display: none !important; }
-[data-testid="stToolbar"] { display: none !important; }
+footer, .stDeployButton { display: none !important; }
+
+/* ── Force Sidebar Visible ── */
+section[data-testid="stSidebar"] {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  transform: none !important;
+  min-width: 260px !important;
+}
+[data-testid="collapsedControl"] {
+  display: flex !important;
+  visibility: visible !important;
+}
 
 /* ── Sidebar ── */
 [data-testid="stSidebar"] {
