@@ -770,7 +770,7 @@ def render_stt(key: str, placeholder_key: str):
         document.getElementById('wave-{key}').style.display='none';
       }}
     </script>
-    """, height=280, key=f"stt_{key}")
+    """, height=280, scrolling=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
