@@ -964,17 +964,38 @@ if st.session_state.phase == "setup":
         with c1:
             job_role = st.selectbox("Job Role", JOB_ROLES)
             interview_type = st.selectbox("Interview Type", INTERVIEW_TYPES)
-            custom = st.text_input("Custom Role (optional)", placeholder="e.g., Prompt Engineer")
-            if custom.strip():
-                job_role = custom.strip()
+            focus_area = st.text_input(
+                "Specific Focus Area (optional)",
+                placeholder="e.g., Tokenization, NLP, System Design, React Hooks",
+                help="Adds a topic focus ON TOP of your selected role. ML Engineer + Tokenization = questions about tokenization for ML."
+            )
+            # Combine role + focus area — do NOT replace, just add context
+            if focus_area.strip():
+                job_role_final = f"{job_role} with deep focus on {focus_area.strip()}"
+            else:
+                job_role_final = job_role
 
         with c2:
             difficulty = st.selectbox("Difficulty", DIFFICULTY_LEVELS, index=1)
             num_questions = st.slider("Number of Questions", 3, 15, 5)
             time_per_q = st.slider("Seconds per Question", 60, 300, 120, step=30)
 
+        # Show preview of interview focus
+        if focus_area.strip():
+            st.markdown(f"""
+            <div class="glass-card" style="background:rgba(110,231,247,0.05);border-color:rgba(110,231,247,0.25);margin-top:0.75rem;">
+              <div style="color:var(--c1);font-size:0.8rem;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.4rem;">✅ Interview Focus Preview</div>
+              <div style="color:var(--text);font-size:0.95rem;">
+                <strong>{job_role}</strong> + focus on <strong style="color:var(--c1);">{focus_area.strip()}</strong><br>
+                <span style="color:var(--muted);font-size:0.85rem;">Questions will cover {focus_area.strip()} specifically in the context of {job_role} work.</span>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            job_role_final = job_role
+
         st.markdown(f"""
-        <div class="glass-card" style="background:rgba(99,102,241,0.05);border-color:rgba(99,102,241,0.2);margin-top:1rem;">
+        <div class="glass-card" style="background:rgba(99,102,241,0.05);border-color:rgba(99,102,241,0.2);margin-top:0.75rem;">
           <div style="color:#a78bfa;font-weight:700;margin-bottom:0.5rem;">🤖 AI Engine</div>
           <div style="color:var(--muted);font-size:0.88rem;">
             <strong style="color:var(--text)">llama-3.1-8b-instant</strong> via Groq —
@@ -1023,7 +1044,7 @@ if st.session_state.phase == "setup":
                     try:
                         interviewer = GroqInterviewer(st.session_state.api_key)
                         questions = interviewer.generate_questions(
-                            job_role=job_role,
+                            job_role=job_role_final if 'job_role_final' in locals() else job_role,
                             interview_type=interview_type,
                             difficulty=difficulty,
                             num_questions=num_questions,
@@ -1032,7 +1053,7 @@ if st.session_state.phase == "setup":
                         st.session_state.update({
                             "phase": "interview",
                             "questions": questions,
-                            "job_role": job_role,
+                            "job_role": job_role_final if 'job_role_final' in locals() else job_role,
                             "interview_type": interview_type,
                             "difficulty": difficulty,
                             "num_questions": num_questions,
@@ -1150,23 +1171,159 @@ elif st.session_state.phase == "interview":
 
     if st.session_state.answer_mode == "voice":
         st.markdown("""
-        <div style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem;">
-          🎤 Click the button below to start speaking. Your speech will be transcribed automatically.
-          <br>After recording, paste your transcript in the text box below or submit directly.
+        <div style="background:rgba(244,114,182,0.06);border:1px solid rgba(244,114,182,0.25);
+                    border-radius:14px;padding:1.25rem;margin-bottom:1rem;">
+          <div style="color:var(--c3);font-weight:700;font-size:0.88rem;margin-bottom:0.5rem;">🎤 Voice Answer Mode</div>
+          <div style="color:var(--muted);font-size:0.85rem;line-height:1.6;">
+            <strong style="color:var(--text);">How to use:</strong><br>
+            1. Click <strong style="color:var(--c3);">Start Recording</strong> below<br>
+            2. Allow microphone when Chrome asks<br>
+            3. Speak your answer clearly<br>
+            4. Click <strong style="color:var(--c5);">Stop Recording</strong> when done<br>
+            5. Copy the transcript shown and paste it in the text box below<br>
+            6. Click Submit ✅
+          </div>
         </div>
         """, unsafe_allow_html=True)
 
-        render_stt(key=f"stt{current_q}", placeholder_key=f"stt{current_q}")
+        # Inline voice recorder — no key conflict
+        waveform_bars = "".join([
+            f'<div style="width:4px;background:#6ee7f7;border-radius:2px;height:6px;'
+            f'animation:wb 0.8s ease-in-out infinite {i*0.1:.1f}s"></div>'
+            for i in range(10)
+        ])
+        stt_uid = f"q{current_q}"
+        components.html(f"""
+        <style>
+          @keyframes wb {{ 0%,100%{{height:6px}} 50%{{height:28px}} }}
+          @keyframes blink {{ 0%,100%{{opacity:1}} 50%{{opacity:0.3}} }}
+          .rec-btn {{ cursor:pointer; border:none; border-radius:12px; padding:12px 24px;
+                      font-weight:800; font-size:14px; font-family:sans-serif;
+                      display:inline-flex; align-items:center; gap:8px; transition:all 0.2s; }}
+          .rec-btn:hover {{ transform:translateY(-2px); }}
+        </style>
+        <div style="font-family:sans-serif; padding:4px;">
+          <div id="wave-{stt_uid}" style="display:none;justify-content:center;align-items:center;
+               gap:4px;height:36px;margin-bottom:12px;">
+            {waveform_bars}
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <button class="rec-btn" id="btn-start-{stt_uid}" onclick="startRec_{stt_uid}()"
+              style="background:linear-gradient(135deg,#f472b6,#ec4899);color:white;
+                     box-shadow:0 4px 15px rgba(244,114,182,0.4);">
+              🎤 Start Recording
+            </button>
+            <button class="rec-btn" id="btn-stop-{stt_uid}" onclick="stopRec_{stt_uid}()"
+              style="background:rgba(251,191,36,0.15);color:#fbbf24;
+                     border:1px solid rgba(251,191,36,0.4);display:none;">
+              ⏹ Stop Recording
+            </button>
+          </div>
+          <div id="status-{stt_uid}" style="color:#6666aa;font-size:13px;margin-bottom:8px;"></div>
+          <div id="live-{stt_uid}" style="display:none;background:rgba(255,255,255,0.04);
+               border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;
+               min-height:60px;font-size:14px;line-height:1.6;color:#eeeeff;
+               max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
+          <div id="copy-area-{stt_uid}" style="display:none;">
+            <div style="color:#34d399;font-size:13px;font-weight:700;margin-bottom:6px;">
+              ✅ Recording complete! Copy the text below and paste it in the answer box:
+            </div>
+            <textarea id="final-text-{stt_uid}" style="width:100%;background:rgba(52,211,153,0.06);
+              border:1px solid rgba(52,211,153,0.3);border-radius:8px;padding:10px;
+              color:#eeeeff;font-size:13px;font-family:sans-serif;resize:vertical;min-height:80px;"></textarea>
+            <button onclick="copyText_{stt_uid}()" style="margin-top:8px;background:rgba(52,211,153,0.15);
+              color:#34d399;border:1px solid rgba(52,211,153,0.35);border-radius:8px;
+              padding:8px 16px;font-weight:700;cursor:pointer;font-family:sans-serif;font-size:13px;">
+              📋 Copy to Clipboard
+            </button>
+          </div>
+        </div>
+        <script>
+          var recog_{stt_uid} = null;
+          var full_{stt_uid} = '';
+
+          function startRec_{stt_uid}() {{
+            var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SR) {{
+              document.getElementById('status-{stt_uid}').innerHTML =
+                '<span style="color:#f472b6">⚠️ Use Google Chrome for voice recording!</span>';
+              return;
+            }}
+            full_{stt_uid} = '';
+            recog_{stt_uid} = new SR();
+            recog_{stt_uid}.continuous = true;
+            recog_{stt_uid}.interimResults = true;
+            recog_{stt_uid}.lang = 'en-US';
+
+            recog_{stt_uid}.onstart = function() {{
+              document.getElementById('btn-start-{stt_uid}').style.display = 'none';
+              document.getElementById('btn-stop-{stt_uid}').style.display = 'inline-flex';
+              document.getElementById('wave-{stt_uid}').style.display = 'flex';
+              document.getElementById('live-{stt_uid}').style.display = 'block';
+              document.getElementById('copy-area-{stt_uid}').style.display = 'none';
+              document.getElementById('status-{stt_uid}').innerHTML =
+                '<span style="color:#f472b6;animation:blink 1s infinite">● Recording... Speak now</span>';
+            }};
+
+            recog_{stt_uid}.onresult = function(e) {{
+              var interim = '';
+              var final_part = '';
+              for (var i = e.resultIndex; i < e.results.length; i++) {{
+                if (e.results[i].isFinal) final_part += e.results[i][0].transcript + ' ';
+                else interim += e.results[i][0].transcript;
+              }}
+              full_{stt_uid} += final_part;
+              document.getElementById('live-{stt_uid}').innerHTML =
+                '<span style="color:#eeeeff">' + full_{stt_uid} + '</span>' +
+                '<span style="color:#6666aa;font-style:italic">' + interim + '</span>';
+            }};
+
+            recog_{stt_uid}.onerror = function(e) {{
+              document.getElementById('status-{stt_uid}').innerHTML =
+                '<span style="color:#f472b6">⚠️ Error: ' + e.error + ' — Allow microphone in Chrome settings</span>';
+              stopRec_{stt_uid}();
+            }};
+
+            recog_{stt_uid}.onend = function() {{
+              var words = full_{stt_uid}.trim().split(' ').filter(w => w).length;
+              document.getElementById('status-{stt_uid}').innerHTML =
+                '<span style="color:#34d399">✅ Captured ' + words + ' words</span>';
+              document.getElementById('wave-{stt_uid}').style.display = 'none';
+              if (full_{stt_uid}.trim()) {{
+                document.getElementById('copy-area-{stt_uid}').style.display = 'block';
+                document.getElementById('final-text-{stt_uid}').value = full_{stt_uid}.trim();
+              }}
+            }};
+
+            recog_{stt_uid}.start();
+          }}
+
+          function stopRec_{stt_uid}() {{
+            if (recog_{stt_uid}) recog_{stt_uid}.stop();
+            document.getElementById('btn-start-{stt_uid}').style.display = 'inline-flex';
+            document.getElementById('btn-stop-{stt_uid}').style.display = 'none';
+            document.getElementById('wave-{stt_uid}').style.display = 'none';
+          }}
+
+          function copyText_{stt_uid}() {{
+            var ta = document.getElementById('final-text-{stt_uid}');
+            ta.select();
+            document.execCommand('copy');
+            document.getElementById('status-{stt_uid}').innerHTML =
+              '<span style="color:#34d399">📋 Copied! Now paste it in the answer box below.</span>';
+          }}
+        </script>
+        """, height=380)
 
         st.markdown("""
         <div style="color:var(--muted);font-size:0.82rem;margin:0.75rem 0 0.4rem;">
-          📋 Your transcribed answer (edit if needed):
+          📋 Paste your transcribed answer here, then click Submit:
         </div>
         """, unsafe_allow_html=True)
         answer_text = st.text_area(
             "Transcribed Answer",
-            placeholder="Your speech will appear here after recording. You can also type directly.",
-            height=160,
+            placeholder="Paste your transcribed speech here, or type your answer directly...",
+            height=180,
             label_visibility="collapsed",
             key=f"ans_voice_{current_q}"
         )
