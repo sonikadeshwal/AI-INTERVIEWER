@@ -1,1784 +1,896 @@
 import streamlit as st
+import groq
+import json
 import time
-import streamlit.components.v1 as components
-from groq_client import GroqInterviewer
-from utils import JOB_ROLES, DIFFICULTY_LEVELS, INTERVIEW_TYPES, get_performance_badge
+import re
+from datetime import datetime
 
-# ── Page Config ────────────────────────────────────────────────────────────────
+# ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="VoiceCoach AI — Interview Mastery",
-    page_icon="🎙️",
+    page_title="AI Interviewer",
+    page_icon="🎯",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-# ── Master CSS + Animations ────────────────────────────────────────────────────
+# ── CSS / Animations ─────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=DM+Mono:wght@400;500&family=Playfair+Display:wght@700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap');
 
-:root {
-  --bg0: #05050d;
-  --bg1: #0c0c1a;
-  --bg2: #111126;
-  --bg3: #181830;
-  --card: rgba(255,255,255,0.03);
-  --border: rgba(255,255,255,0.07);
-  --border-bright: rgba(255,255,255,0.15);
-  --c1: #6ee7f7;   /* ice blue */
-  --c2: #a78bfa;   /* violet */
-  --c3: #f472b6;   /* pink */
-  --c4: #34d399;   /* emerald */
-  --c5: #fbbf24;   /* amber */
-  --text: #eeeeff;
-  --muted: #6666aa;
-  --radius: 18px;
-  --radius-sm: 10px;
-  --glow1: rgba(110,231,247,0.15);
-  --glow2: rgba(167,139,250,0.15);
+/* ── RESET & BASE ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, [data-testid="stAppViewContainer"] {
+    background: #050810 !important;
+    color: #e8eaf0 !important;
+    font-family: 'Syne', sans-serif !important;
 }
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; }
-
-/* ── App Shell ── */
-.stApp {
-  background: var(--bg0) !important;
-  font-family: 'Outfit', sans-serif !important;
-  color: var(--text) !important;
-  min-height: 100vh;
-}
-.stApp::before {
-  content: '';
-  position: fixed; inset: 0;
-  background:
-    radial-gradient(ellipse 70% 50% at 15% 20%, rgba(110,231,247,0.07) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 60% at 85% 80%, rgba(167,139,250,0.08) 0%, transparent 60%),
-    radial-gradient(ellipse 40% 40% at 50% 50%, rgba(244,114,182,0.04) 0%, transparent 70%);
-  pointer-events: none; z-index: 0;
+[data-testid="stAppViewContainer"] {
+    background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99,102,241,.18) 0%, transparent 70%),
+                radial-gradient(ellipse 60% 40% at 80% 80%, rgba(16,185,129,.08) 0%, transparent 60%),
+                #050810 !important;
 }
 
-/* ── Hide Streamlit UI ── */
-footer, .stDeployButton { display: none !important; }
+[data-testid="stHeader"], [data-testid="stToolbar"] { display: none !important; }
+[data-testid="stSidebar"] { display: none !important; }
+.block-container { max-width: 1100px !important; padding: 2rem 2rem !important; }
 
-/* ── Force Sidebar Visible ── */
-section[data-testid="stSidebar"] {
-  display: flex !important;
-  visibility: visible !important;
-  opacity: 1 !important;
-  transform: none !important;
-  min-width: 260px !important;
-}
-[data-testid="collapsedControl"] {
-  display: flex !important;
-  visibility: visible !important;
-}
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #0d0f18; }
+::-webkit-scrollbar-thumb { background: #6366f1; border-radius: 2px; }
 
-/* ── Sidebar ── */
-[data-testid="stSidebar"] {
-  background: var(--bg1) !important;
-  border-right: 1px solid var(--border) !important;
-}
-[data-testid="stSidebar"] > div { padding: 1.5rem 1.2rem !important; }
-[data-testid="stSidebar"] label {
-  color: var(--muted) !important;
-  font-size: 0.75rem !important;
-  font-weight: 700 !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.1em !important;
-}
-[data-testid="stSidebar"] .stSelectbox > div > div,
-[data-testid="stSidebar"] .stTextInput > div > div > input {
-  background: var(--bg2) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: var(--radius-sm) !important;
-  color: var(--text) !important;
-  font-family: 'Outfit', sans-serif !important;
-}
-
-/* ── Buttons ── */
-.stButton > button {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
-  color: white !important;
-  border: none !important;
-  border-radius: var(--radius-sm) !important;
-  font-family: 'Outfit', sans-serif !important;
-  font-weight: 700 !important;
-  font-size: 0.95rem !important;
-  padding: 0.7rem 1.5rem !important;
-  transition: all 0.25s cubic-bezier(0.4,0,0.2,1) !important;
-  width: 100%;
-  letter-spacing: 0.02em !important;
-}
-.stButton > button:hover {
-  transform: translateY(-2px) !important;
-  box-shadow: 0 10px 30px rgba(99,102,241,0.4) !important;
-  background: linear-gradient(135deg, #818cf8, #a78bfa) !important;
-}
-.stButton > button:active { transform: translateY(0) !important; }
-
-/* ── Text areas ── */
-.stTextArea textarea {
-  background: var(--bg2) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: var(--radius-sm) !important;
-  color: var(--text) !important;
-  font-family: 'Outfit', sans-serif !important;
-  font-size: 1rem !important;
-  line-height: 1.7 !important;
-  transition: border-color 0.2s, box-shadow 0.2s !important;
-  resize: vertical !important;
-}
-.stTextArea textarea:focus {
-  border-color: var(--c2) !important;
-  box-shadow: 0 0 0 3px rgba(167,139,250,0.12) !important;
-  outline: none !important;
-}
-
-/* ── Alerts ── */
-.stSuccess { background: rgba(52,211,153,0.08) !important; border: 1px solid rgba(52,211,153,0.25) !important; border-radius: var(--radius-sm) !important; color: var(--c4) !important; }
-.stWarning { background: rgba(251,191,36,0.08) !important; border: 1px solid rgba(251,191,36,0.25) !important; border-radius: var(--radius-sm) !important; }
-.stError   { background: rgba(244,114,182,0.08) !important; border: 1px solid rgba(244,114,182,0.25) !important; border-radius: var(--radius-sm) !important; }
-.stInfo    { background: rgba(110,231,247,0.08) !important; border: 1px solid rgba(110,231,247,0.25) !important; border-radius: var(--radius-sm) !important; }
-
-/* ── Metrics ── */
-div[data-testid="stMetric"] {
-  background: var(--card) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: var(--radius) !important;
-  padding: 1.25rem !important;
-  backdrop-filter: blur(10px) !important;
-}
-div[data-testid="stMetricValue"] {
-  font-family: 'Outfit', sans-serif !important;
-  font-weight: 800 !important;
-  font-size: 2rem !important;
-  color: var(--c1) !important;
-}
-div[data-testid="stMetricLabel"] {
-  color: var(--muted) !important;
-  font-size: 0.78rem !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.08em !important;
-}
-
-/* ── Tabs ── */
-.stTabs [data-baseweb="tab-list"] {
-  background: var(--bg2) !important;
-  border-radius: var(--radius-sm) !important;
-  padding: 0.3rem !important;
-  gap: 0.2rem !important;
-  border: 1px solid var(--border) !important;
-}
-.stTabs [data-baseweb="tab"] {
-  background: transparent !important;
-  color: var(--muted) !important;
-  border-radius: 8px !important;
-  font-weight: 600 !important;
-  font-family: 'Outfit', sans-serif !important;
-  transition: all 0.2s !important;
-}
-.stTabs [aria-selected="true"] {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
-  color: white !important;
-  box-shadow: 0 4px 12px rgba(99,102,241,0.3) !important;
-}
-
-/* ── Expanders ── */
-details {
-  background: var(--card) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: var(--radius-sm) !important;
-}
-details summary { color: var(--text) !important; font-weight: 600 !important; }
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-track { background: var(--bg0); }
-::-webkit-scrollbar-thumb { background: var(--c2); border-radius: 3px; }
-
-/* ── Keyframes ── */
-@keyframes fadeUp   { from { opacity:0; transform:translateY(24px); } to { opacity:1; transform:translateY(0); } }
-@keyframes fadeIn   { from { opacity:0; } to { opacity:1; } }
-@keyframes pulse    { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } }
-@keyframes shimmer  { 0% { background-position:200% center; } 100% { background-position:-200% center; } }
-@keyframes float    { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-8px); } }
-@keyframes ripple   { 0% { transform:scale(0.8); opacity:1; } 100% { transform:scale(2.5); opacity:0; } }
-@keyframes spin     { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
-@keyframes gradMove { 0%,100% { background-position:0% 50%; } 50% { background-position:100% 50%; } }
-@keyframes orb1     { 0%,100% { transform:translate(0,0) scale(1); } 33% { transform:translate(30px,-20px) scale(1.1); } 66% { transform:translate(-20px,10px) scale(0.95); } }
-@keyframes orb2     { 0%,100% { transform:translate(0,0) scale(1); } 33% { transform:translate(-25px,15px) scale(0.9); } 66% { transform:translate(20px,-25px) scale(1.05); } }
-@keyframes waveBar  { 0%,100% { height:6px; } 50% { height:24px; } }
-@keyframes blink    { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
-
-/* ── Utility Classes ── */
-.fade-up  { animation: fadeUp 0.5s ease forwards; }
-.fade-in  { animation: fadeIn 0.4s ease forwards; }
-
-/* ── Hero ── */
+/* ── HERO HEADER ── */
 .hero {
-  background: linear-gradient(135deg, var(--bg2) 0%, var(--bg3) 100%);
-  border: 1px solid var(--border);
-  border-radius: 28px;
-  padding: 3.5rem 3rem;
-  margin-bottom: 2rem;
-  position: relative;
-  overflow: hidden;
-  animation: fadeUp 0.6s ease;
+    text-align: center;
+    padding: 3rem 0 2rem;
+    position: relative;
 }
-.hero-orb1 {
-  position: absolute; width: 300px; height: 300px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(110,231,247,0.18) 0%, transparent 70%);
-  top: -80px; left: -60px;
-  animation: orb1 8s ease-in-out infinite;
+.hero::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 600px; height: 2px;
+    background: linear-gradient(90deg, transparent, #6366f1, #10b981, transparent);
+    animation: scanline 3s ease-in-out infinite;
 }
-.hero-orb2 {
-  position: absolute; width: 250px; height: 250px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(167,139,250,0.15) 0%, transparent 70%);
-  bottom: -60px; right: -40px;
-  animation: orb2 10s ease-in-out infinite;
+@keyframes scanline {
+    0%, 100% { opacity: 0; }
+    50% { opacity: 1; }
 }
 .hero-badge {
-  display: inline-flex; align-items: center; gap: 0.5rem;
-  background: rgba(110,231,247,0.1);
-  border: 1px solid rgba(110,231,247,0.25);
-  color: var(--c1);
-  padding: 0.35rem 1rem;
-  border-radius: 50px;
-  font-size: 0.78rem; font-weight: 700;
-  letter-spacing: 0.1em; text-transform: uppercase;
-  margin-bottom: 1.25rem;
-  position: relative; z-index: 1;
+    display: inline-block;
+    font-family: 'DM Mono', monospace;
+    font-size: .72rem;
+    letter-spacing: .2em;
+    color: #10b981;
+    border: 1px solid rgba(16,185,129,.35);
+    padding: .3rem .9rem;
+    border-radius: 2rem;
+    margin-bottom: 1.4rem;
+    background: rgba(16,185,129,.06);
+    animation: fadeDown .6s ease both;
 }
-.hero-badge::before {
-  content: ''; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--c1);
-  animation: blink 1.5s ease-in-out infinite;
+.hero h1 {
+    font-size: clamp(2.4rem, 5vw, 4rem);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -.03em;
+    background: linear-gradient(135deg, #e8eaf0 20%, #6366f1 60%, #10b981 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: fadeDown .7s .1s ease both;
 }
-.hero-title {
-  font-family: 'Playfair Display', serif;
-  font-size: clamp(2.5rem, 5vw, 4rem);
-  font-weight: 800; line-height: 1.1;
-  background: linear-gradient(135deg, #eeeeff 0%, var(--c1) 40%, var(--c2) 80%);
-  background-size: 200% auto;
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  background-clip: text;
-  animation: shimmer 4s linear infinite;
-  margin-bottom: 1rem;
-  position: relative; z-index: 1;
+.hero p {
+    color: rgba(232,234,240,.45);
+    font-size: 1rem;
+    margin-top: .8rem;
+    font-family: 'DM Mono', monospace;
+    animation: fadeDown .7s .2s ease both;
 }
-.hero-sub {
-  color: var(--muted); font-size: 1.1rem; font-weight: 400;
-  line-height: 1.6; max-width: 600px;
-  position: relative; z-index: 1;
-}
-.hero-chips {
-  display: flex; flex-wrap: wrap; gap: 0.5rem;
-  margin-top: 1.5rem; position: relative; z-index: 1;
-}
-.hchip {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid var(--border-bright);
-  color: var(--text); padding: 0.35rem 0.9rem;
-  border-radius: 50px; font-size: 0.82rem; font-weight: 500;
+@keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-18px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Cards ── */
+/* ── GLASS CARDS ── */
 .glass-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  backdrop-filter: blur(12px);
-  transition: border-color 0.25s, transform 0.25s, box-shadow 0.25s;
-  animation: fadeUp 0.5s ease;
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.07);
+    border-radius: 16px;
+    padding: 1.6rem;
+    backdrop-filter: blur(12px);
+    position: relative;
+    overflow: hidden;
+    transition: border-color .25s, transform .25s, box-shadow .25s;
+    animation: riseIn .5s ease both;
+}
+.glass-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(99,102,241,.06) 0%, transparent 60%);
+    pointer-events: none;
 }
 .glass-card:hover {
-  border-color: var(--border-bright);
-  transform: translateY(-3px);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+    border-color: rgba(99,102,241,.35);
+    transform: translateY(-2px);
+    box-shadow: 0 20px 60px rgba(99,102,241,.1);
 }
-.card-label {
-  font-size: 0.72rem; font-weight: 800;
-  text-transform: uppercase; letter-spacing: 0.12em;
-  color: var(--muted); margin-bottom: 0.5rem;
-}
-
-/* ── Mode Selector ── */
-.mode-grid {
-  display: grid; grid-template-columns: 1fr 1fr;
-  gap: 1rem; margin: 1rem 0;
-}
-.mode-card {
-  background: var(--card);
-  border: 2px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  text-align: center; cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
-  position: relative; overflow: hidden;
-}
-.mode-card::before {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(135deg, transparent, rgba(255,255,255,0.03));
-  opacity: 0; transition: opacity 0.25s;
-}
-.mode-card:hover::before { opacity: 1; }
-.mode-card:hover {
-  border-color: var(--c2);
-  transform: translateY(-4px);
-  box-shadow: 0 16px 40px rgba(167,139,250,0.2);
-}
-.mode-card.active {
-  border-color: var(--c1);
-  background: rgba(110,231,247,0.06);
-  box-shadow: 0 0 0 1px var(--c1), 0 12px 35px rgba(110,231,247,0.15);
-}
-.mode-icon {
-  font-size: 2.5rem; margin-bottom: 0.75rem;
-  animation: float 4s ease-in-out infinite;
-}
-.mode-title { font-weight: 800; font-size: 1.1rem; margin-bottom: 0.25rem; }
-.mode-desc  { color: var(--muted); font-size: 0.85rem; }
-
-/* ── Question Display ── */
-.question-panel {
-  background: linear-gradient(135deg, var(--bg2) 0%, var(--bg3) 100%);
-  border: 1px solid rgba(110,231,247,0.2);
-  border-left: 4px solid var(--c1);
-  border-radius: var(--radius);
-  padding: 2rem;
-  margin: 1.5rem 0;
-  position: relative;
-  animation: fadeUp 0.4s ease;
-}
-.q-badge {
-  display: inline-flex; align-items: center; gap: 0.4rem;
-  font-size: 0.72rem; font-weight: 800;
-  text-transform: uppercase; letter-spacing: 0.12em;
-  color: var(--c1); margin-bottom: 0.75rem;
-}
-.q-number {
-  position: absolute; top: 1.5rem; right: 1.5rem;
-  font-family: 'DM Mono', monospace;
-  font-size: 0.78rem; color: var(--muted);
-}
-.q-text {
-  font-size: 1.3rem; font-weight: 600; line-height: 1.65;
-  color: var(--text);
+@keyframes riseIn {
+    from { opacity: 0; transform: translateY(24px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Waveform Visualizer ── */
-.waveform {
-  display: flex; align-items: center; justify-content: center;
-  gap: 4px; height: 40px; margin: 1rem 0;
-}
-.wave-bar {
-  width: 4px; background: var(--c1);
-  border-radius: 2px; height: 6px;
-}
-.wave-bar:nth-child(1)  { animation: waveBar 0.8s ease-in-out infinite 0.0s; }
-.wave-bar:nth-child(2)  { animation: waveBar 0.8s ease-in-out infinite 0.1s; }
-.wave-bar:nth-child(3)  { animation: waveBar 0.8s ease-in-out infinite 0.2s; }
-.wave-bar:nth-child(4)  { animation: waveBar 0.8s ease-in-out infinite 0.1s; }
-.wave-bar:nth-child(5)  { animation: waveBar 0.8s ease-in-out infinite 0.0s; }
-.wave-bar:nth-child(6)  { animation: waveBar 0.8s ease-in-out infinite 0.15s; }
-.wave-bar:nth-child(7)  { animation: waveBar 0.8s ease-in-out infinite 0.25s; }
-.wave-bar:nth-child(8)  { animation: waveBar 0.8s ease-in-out infinite 0.1s; }
-.wave-bar:nth-child(9)  { animation: waveBar 0.8s ease-in-out infinite 0.05s; }
-.wave-bar:nth-child(10) { animation: waveBar 0.8s ease-in-out infinite 0.2s; }
-
-/* ── Score Ring ── */
-.score-ring-wrap { text-align: center; padding: 2rem 0; }
-.score-value {
-  font-family: 'Playfair Display', serif;
-  font-size: 5rem; font-weight: 800; line-height: 1;
-}
-.score-label {
-  font-size: 0.78rem; color: var(--muted);
-  text-transform: uppercase; letter-spacing: 0.12em;
+/* ── SECTION LABELS ── */
+.section-label {
+    font-family: 'DM Mono', monospace;
+    font-size: .68rem;
+    letter-spacing: .2em;
+    color: #6366f1;
+    text-transform: uppercase;
+    margin-bottom: .6rem;
 }
 
-/* ── Feedback Panels ── */
-.fb-panel {
-  border-radius: var(--radius);
-  padding: 1.75rem;
-  margin: 1rem 0;
-  animation: fadeUp 0.4s ease;
+/* ── METRIC GRID ── */
+.metrics-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin: 1.4rem 0;
 }
-.fb-excellent { background: rgba(52,211,153,0.06); border: 1px solid rgba(52,211,153,0.25); }
-.fb-good      { background: rgba(110,231,247,0.06); border: 1px solid rgba(110,231,247,0.25); }
-.fb-average   { background: rgba(251,191,36,0.06);  border: 1px solid rgba(251,191,36,0.25);  }
-.fb-poor      { background: rgba(244,114,182,0.06); border: 1px solid rgba(244,114,182,0.25); }
-.fb-score { font-family: 'DM Mono', monospace; font-size: 2.5rem; font-weight: 700; }
-.fb-section-title {
-  font-size: 0.75rem; font-weight: 800;
-  text-transform: uppercase; letter-spacing: 0.1em;
-  margin: 1rem 0 0.5rem 0;
+.metric-box {
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.07);
+    border-radius: 12px;
+    padding: 1.1rem 1rem;
+    text-align: center;
+    animation: riseIn .5s ease both;
+    transition: transform .2s, border-color .2s;
 }
-.pronunciation-item {
-  display: flex; align-items: flex-start; gap: 0.75rem;
-  padding: 0.75rem;
-  background: rgba(255,255,255,0.03);
-  border-radius: 8px; margin-bottom: 0.5rem;
-  border: 1px solid var(--border);
+.metric-box:hover { transform: scale(1.03); border-color: rgba(99,102,241,.4); }
+.metric-val {
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: -.03em;
+    line-height: 1;
 }
-.wrong-word {
-  font-family: 'DM Mono', monospace;
-  color: var(--c3); font-weight: 700;
-  text-decoration: line-through;
-}
-.correct-word {
-  font-family: 'DM Mono', monospace;
-  color: var(--c4); font-weight: 700;
+.metric-label {
+    font-family: 'DM Mono', monospace;
+    font-size: .65rem;
+    letter-spacing: .15em;
+    color: rgba(232,234,240,.4);
+    margin-top: .35rem;
+    text-transform: uppercase;
 }
 
-/* ── Progress bar ── */
-.prog-wrap {
-  background: rgba(255,255,255,0.05);
-  border-radius: 50px; height: 6px;
-  overflow: hidden; margin: 0.5rem 0 1.5rem;
+/* ── SCORE RING ── */
+.score-ring-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: .6rem;
+    padding: 1.4rem 0;
 }
-.prog-fill {
-  height: 100%; border-radius: 50px;
-  background: linear-gradient(90deg, var(--c2), var(--c1));
-  transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+.score-ring-wrap svg { overflow: visible; }
+
+/* ── KEYWORD CHIP ── */
+.chip-row { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .7rem; }
+.chip {
+    font-family: 'DM Mono', monospace;
+    font-size: .7rem;
+    padding: .22rem .65rem;
+    border-radius: 3rem;
+    border: 1px solid;
+    letter-spacing: .04em;
+    animation: popIn .3s ease both;
+}
+.chip-ok { background: rgba(16,185,129,.1); border-color: rgba(16,185,129,.4); color: #10b981; }
+.chip-miss { background: rgba(239,68,68,.1); border-color: rgba(239,68,68,.3); color: #f87171; }
+@keyframes popIn {
+    from { opacity: 0; transform: scale(.8); }
+    to   { opacity: 1; transform: scale(1); }
 }
 
-/* ── Timer ── */
-.timer-box {
-  font-family: 'DM Mono', monospace;
-  font-size: 2.2rem; font-weight: 700;
-  color: var(--c1); text-align: center;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 1rem;
-  letter-spacing: 0.05em;
-}
-.timer-warn   { color: var(--c5) !important; }
-.timer-danger { color: var(--c3) !important; }
-
-/* ── Chips ── */
-.chip { display:inline-flex; align-items:center; gap:0.3rem; padding:0.3rem 0.8rem; border-radius:50px; font-size:0.75rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; }
-.chip-blue   { background:rgba(110,231,247,0.1); color:var(--c1); border:1px solid rgba(110,231,247,0.25); }
-.chip-purple { background:rgba(167,139,250,0.1); color:var(--c2); border:1px solid rgba(167,139,250,0.25); }
-.chip-pink   { background:rgba(244,114,182,0.1); color:var(--c3); border:1px solid rgba(244,114,182,0.25); }
-.chip-green  { background:rgba(52,211,153,0.1);  color:var(--c4); border:1px solid rgba(52,211,153,0.25);  }
-.chip-amber  { background:rgba(251,191,36,0.1);  color:var(--c5); border:1px solid rgba(251,191,36,0.25);  }
-
-/* ── Divider ── */
-hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
-
-/* ── Report header ── */
-.report-hero {
-  text-align: center; padding: 3rem 2rem;
-  background: linear-gradient(135deg, var(--bg2), var(--bg3));
-  border: 1px solid var(--border);
-  border-radius: 28px; margin-bottom: 2rem;
-  position: relative; overflow: hidden;
-}
-.report-hero-orb {
-  position: absolute; border-radius: 50%;
-  background: radial-gradient(circle, rgba(110,231,247,0.12) 0%, transparent 70%);
-  width: 400px; height: 400px;
-  top: -100px; left: 50%; transform: translateX(-50%);
-  pointer-events: none;
+/* ── FEEDBACK BLOCK ── */
+.fb-block {
+    background: rgba(99,102,241,.06);
+    border-left: 3px solid #6366f1;
+    border-radius: 0 10px 10px 0;
+    padding: 1rem 1.2rem;
+    font-size: .92rem;
+    line-height: 1.7;
+    color: rgba(232,234,240,.85);
+    margin-top: .8rem;
 }
 
-/* ── Sidebar logo ── */
-.sb-logo {
-  font-family: 'Playfair Display', serif;
-  font-size: 1.6rem; font-weight: 800;
-  background: linear-gradient(135deg, var(--c1), var(--c2));
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  background-clip: text;
-  margin-bottom: 0.25rem;
+/* ── QUESTION BUBBLE ── */
+.q-bubble {
+    background: linear-gradient(135deg, rgba(99,102,241,.12), rgba(99,102,241,.04));
+    border: 1px solid rgba(99,102,241,.25);
+    border-radius: 0 14px 14px 14px;
+    padding: 1.1rem 1.3rem;
+    font-size: 1.05rem;
+    line-height: 1.65;
+    position: relative;
+    animation: riseIn .4s ease both;
 }
-.sb-sub {
-  color: var(--muted); font-size: 0.75rem;
-  font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.1em; margin-bottom: 1.5rem;
-}
-
-/* ── Voice recording UI ── */
-.voice-recording-panel {
-  background: rgba(244,114,182,0.05);
-  border: 2px solid rgba(244,114,182,0.3);
-  border-radius: var(--radius);
-  padding: 2rem; text-align: center;
-  animation: fadeUp 0.3s ease;
-}
-.recording-dot {
-  width: 16px; height: 16px; border-radius: 50%;
-  background: var(--c3);
-  display: inline-block; margin-right: 0.5rem;
-  animation: blink 1s ease-in-out infinite;
+.q-bubble::before {
+    content: 'Q';
+    position: absolute;
+    top: -1px; left: -1px;
+    background: #6366f1;
+    color: #fff;
+    font-size: .7rem;
+    font-weight: 700;
+    padding: .15rem .35rem;
+    border-radius: 4px 0 4px 0;
 }
 
-/* ── Pronunciation correction box ── */
-.pronun-box {
-  background: rgba(99,102,241,0.05);
-  border: 1px solid rgba(99,102,241,0.2);
-  border-radius: var(--radius);
-  padding: 1.5rem; margin-top: 1rem;
+/* ── ANSWER BOX ── */
+[data-testid="stTextArea"] textarea {
+    background: rgba(255,255,255,.03) !important;
+    border: 1px solid rgba(255,255,255,.1) !important;
+    border-radius: 12px !important;
+    color: #e8eaf0 !important;
+    font-family: 'DM Mono', monospace !important;
+    font-size: .9rem !important;
+    resize: vertical !important;
+    transition: border-color .2s !important;
 }
-.phonetic {
-  font-family: 'DM Mono', monospace;
-  font-size: 1.1rem; color: var(--c1);
-  background: rgba(110,231,247,0.08);
-  padding: 0.3rem 0.7rem; border-radius: 6px;
-  display: inline-block;
+[data-testid="stTextArea"] textarea:focus {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 3px rgba(99,102,241,.15) !important;
+    outline: none !important;
 }
 
-/* ── Communication score bars ── */
-.comm-bar-wrap { margin: 0.6rem 0; }
-.comm-bar-label {
-  display: flex; justify-content: space-between;
-  font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;
+/* ── SELECTBOX & INPUTS ── */
+[data-testid="stSelectbox"] > div > div,
+[data-testid="stTextInput"] input {
+    background: rgba(255,255,255,.04) !important;
+    border: 1px solid rgba(255,255,255,.1) !important;
+    border-radius: 10px !important;
+    color: #e8eaf0 !important;
+    font-family: 'Syne', sans-serif !important;
 }
-.comm-bar-track {
-  background: rgba(255,255,255,0.06);
-  border-radius: 50px; height: 8px; overflow: hidden;
+
+/* ── BUTTONS ── */
+.stButton > button {
+    background: linear-gradient(135deg, #6366f1, #4f46e5) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-family: 'Syne', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: .9rem !important;
+    letter-spacing: .03em !important;
+    padding: .65rem 1.6rem !important;
+    transition: all .2s !important;
+    position: relative;
+    overflow: hidden;
 }
-.comm-bar-fill {
-  height: 100%; border-radius: 50px;
-  background: linear-gradient(90deg, var(--c2), var(--c1));
-  transition: width 1s cubic-bezier(0.4,0,0.2,1);
+.stButton > button::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,.15), transparent);
+    opacity: 0;
+    transition: opacity .2s;
+}
+.stButton > button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 30px rgba(99,102,241,.4) !important;
+}
+.stButton > button:hover::after { opacity: 1; }
+
+/* ── PROGRESS ── */
+[data-testid="stProgress"] > div > div {
+    background: linear-gradient(90deg, #6366f1, #10b981) !important;
+    border-radius: 4px !important;
+    animation: progressGlow 2s ease infinite;
+}
+@keyframes progressGlow {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.3); }
+}
+
+/* ── DIVIDER ── */
+.fancy-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(99,102,241,.4), rgba(16,185,129,.3), transparent);
+    margin: 1.5rem 0;
+}
+
+/* ── STEP TRACKER ── */
+.steps {
+    display: flex;
+    justify-content: center;
+    gap: 0;
+    margin: 1.5rem 0 2rem;
+    position: relative;
+}
+.steps::before {
+    content: '';
+    position: absolute;
+    top: 14px; left: 15%; right: 15%;
+    height: 1px;
+    background: rgba(255,255,255,.08);
+}
+.step-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .4rem;
+    flex: 1;
+    max-width: 160px;
+    position: relative;
+    z-index: 1;
+}
+.step-dot {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .72rem;
+    font-weight: 700;
+    font-family: 'DM Mono', monospace;
+    transition: all .3s;
+}
+.step-dot.active {
+    background: #6366f1;
+    box-shadow: 0 0 20px rgba(99,102,241,.6);
+    animation: pulse 2s infinite;
+}
+.step-dot.done { background: #10b981; }
+.step-dot.idle { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); color: rgba(232,234,240,.3); }
+@keyframes pulse {
+    0%, 100% { box-shadow: 0 0 20px rgba(99,102,241,.6); }
+    50% { box-shadow: 0 0 35px rgba(99,102,241,.9); }
+}
+.step-text {
+    font-family: 'DM Mono', monospace;
+    font-size: .62rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: rgba(232,234,240,.4);
+}
+.step-text.active { color: #6366f1; }
+.step-text.done { color: #10b981; }
+
+/* ── HISTORY ITEM ── */
+.hist-item {
+    border-left: 2px solid rgba(99,102,241,.3);
+    padding: .7rem 1rem;
+    margin-bottom: .8rem;
+    transition: border-color .2s;
+    animation: riseIn .4s ease both;
+}
+.hist-item:hover { border-color: #6366f1; }
+.hist-q { font-size: .88rem; color: rgba(232,234,240,.6); margin-bottom: .3rem; }
+.hist-score {
+    font-family: 'DM Mono', monospace;
+    font-size: .78rem;
+    font-weight: 500;
+}
+
+/* ── TYPING INDICATOR ── */
+.typing {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: .5rem 0;
+}
+.typing span {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #6366f1;
+    animation: bounce 1.2s ease infinite;
+}
+.typing span:nth-child(2) { animation-delay: .2s; }
+.typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes bounce {
+    0%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-8px); }
+}
+
+/* alert overrides */
+[data-testid="stAlert"] {
+    background: rgba(99,102,241,.08) !important;
+    border: 1px solid rgba(99,102,241,.25) !important;
+    border-radius: 10px !important;
+    color: rgba(232,234,240,.8) !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
+# ── Session state ─────────────────────────────────────────────────────────────
+defaults = {
+    "step": 0,           # 0=config, 1=interview, 2=results
+    "questions": [],
+    "current_q": 0,
+    "answers": [],
+    "evaluations": [],
+    "groq_key": "",
+    "role": "",
+    "difficulty": "Medium",
+    "num_q": 5,
+    "domain": "Software Engineering",
+    "interview_started": False,
+    "loading": False,
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-# ── Session State ──────────────────────────────────────────────────────────────
-def init_state():
-    defaults = {
-        "phase": "setup",
-        "api_key": "",
-        "job_role": "Software Engineer",
-        "difficulty": "Intermediate",
-        "interview_type": "Mixed",
-        "num_questions": 5,
-        "time_per_q": 120,
-        "question_mode": "text",   # text | voice
-        "answer_mode": "text",     # text | voice
-        "questions": [],
-        "answers": [],
-        "feedbacks": [],
-        "scores": [],
-        "pronunciation_reports": [],
-        "communication_scores": [],
-        "follow_ups": [],
-        "current_q": 0,
-        "start_time": None,
-        "q_start_time": None,
-        "interviewer": None,
-        "resume_text": "",
-        "cached_summary": None,
-        "voice_transcript": "",
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+# ── Groq helpers ──────────────────────────────────────────────────────────────
+def get_client():
+    return groq.Groq(api_key=st.session_state.groq_key)
 
-init_state()
+def llm(prompt: str, system: str = "", json_mode: bool = False) -> str:
+    client = get_client()
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    kwargs = dict(
+        model="llama-3.3-70b-versatile",
+        messages=messages,
+        max_tokens=1800,
+        temperature=0.7,
+    )
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    resp = client.chat.completions.create(**kwargs)
+    return resp.choices[0].message.content.strip()
 
-# ── Load API key from secrets if available ─────────────────────────────────────
-if not st.session_state.api_key:
-    try:
-        st.session_state.api_key = st.secrets.get("GROQ_API_KEY", "")
-    except Exception:
-        pass
+def generate_questions(role, domain, difficulty, num_q):
+    system = (
+        "You are a senior technical interviewer. Generate realistic interview questions. "
+        "Always respond with valid JSON only, no extra text."
+    )
+    prompt = f"""Generate {num_q} {difficulty.lower()}-level interview questions for a {role} position in {domain}.
+Return JSON: {{"questions": [{{"id":1,"question":"...","category":"...","reference_answer":"...","key_concepts":["..."]}}]}}
+Each reference_answer should be 2-4 sentences. key_concepts should be 4-7 important terms/phrases."""
+    raw = llm(prompt, system, json_mode=True)
+    data = json.loads(raw)
+    return data["questions"]
 
+def evaluate_answer(question: dict, user_answer: str) -> dict:
+    system = (
+        "You are an expert technical interviewer evaluating candidate responses. "
+        "Respond ONLY with valid JSON, no markdown, no extra text."
+    )
+    prompt = f"""Evaluate this interview answer strictly and fairly.
 
-# ── Voice TTS Component ────────────────────────────────────────────────────────
-def render_tts(text: str, key: str):
-    """Text-to-speech button using browser Web Speech API."""
-    safe = text.replace("'", "\\'").replace('"', '\\"').replace('\n', ' ')
-    components.html(f"""
-    <div style="font-family:'Outfit',sans-serif; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-      <button id="btn-play-{key}" onclick="playTTS()" style="
-        background:linear-gradient(135deg,#6ee7f7,#38bdf8);
-        color:#05050d; border:none; border-radius:10px;
-        padding:10px 20px; font-weight:800; font-size:14px;
-        cursor:pointer; display:flex; align-items:center; gap:8px;
-        font-family:'Outfit',sans-serif; letter-spacing:0.02em;
-        box-shadow:0 4px 15px rgba(110,231,247,0.3);
-        transition:all 0.2s;
-      " onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">
-        🔊 Listen to Question
-      </button>
-      <button id="btn-stop-{key}" onclick="stopTTS()" style="
-        background:rgba(244,114,182,0.15);
-        color:#f472b6; border:1px solid rgba(244,114,182,0.35);
-        border-radius:10px; padding:10px 20px;
-        font-weight:800; font-size:14px; cursor:pointer;
-        font-family:'Outfit',sans-serif; display:none;
-        transition:all 0.2s;
-      ">⏹ Stop</button>
-      <span id="status-{key}" style="color:#6666aa; font-size:13px;"></span>
-    </div>
-    <script>
-      var synth = window.speechSynthesis;
-      var utt_{key} = null;
-      function playTTS() {{
-        if(synth.speaking) synth.cancel();
-        utt_{key} = new SpeechSynthesisUtterance('{safe}');
-        utt_{key}.rate = 0.92;
-        utt_{key}.pitch = 1.05;
-        utt_{key}.volume = 1;
-        // prefer a natural voice
-        var voices = synth.getVoices();
-        var preferred = voices.find(v => v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Samantha'));
-        if(preferred) utt_{key}.voice = preferred;
-        utt_{key}.onstart  = () => {{
-          document.getElementById('btn-play-{key}').style.display='none';
-          document.getElementById('btn-stop-{key}').style.display='flex';
-          document.getElementById('status-{key}').innerText = '🎙 Speaking...';
-        }};
-        utt_{key}.onend = utt_{key}.onerror = () => {{
-          document.getElementById('btn-play-{key}').style.display='flex';
-          document.getElementById('btn-stop-{key}').style.display='none';
-          document.getElementById('status-{key}').innerText = '';
-        }};
-        synth.speak(utt_{key});
-      }}
-      function stopTTS() {{
-        synth.cancel();
-        document.getElementById('btn-play-{key}').style.display='flex';
-        document.getElementById('btn-stop-{key}').style.display='none';
-        document.getElementById('status-{key}').innerText = '';
-      }}
-    </script>
-    """, height=60)
+Question: {question['question']}
+Reference Answer: {question['reference_answer']}
+Key Concepts: {', '.join(question['key_concepts'])}
+Candidate Answer: {user_answer}
 
+Return JSON:
+{{
+  "confidence_score": <0-100 int>,
+  "keyword_coverage": <0-100 int>,
+  "accuracy_score": <0-100 int>,
+  "overall_score": <0-100 int>,
+  "covered_keywords": ["list of key concepts mentioned"],
+  "missing_keywords": ["list of key concepts NOT mentioned"],
+  "strengths": "1-2 sentence strength summary",
+  "improvements": "1-2 sentence improvement suggestion",
+  "detailed_feedback": "3-4 sentence detailed evaluation"
+}}"""
+    raw = llm(prompt, system, json_mode=True)
+    return json.loads(raw)
 
-# ── Voice STT Component ────────────────────────────────────────────────────────
-def render_stt(key: str, placeholder_key: str):
-    """Speech-to-text using browser Web Speech API. Writes transcript to a hidden field."""
-    components.html(f"""
-    <div style="font-family:'Outfit',sans-serif;">
-      <div id="stt-panel-{key}" style="
-        background:rgba(244,114,182,0.05);
-        border:2px solid rgba(244,114,182,0.25);
-        border-radius:14px; padding:1.5rem; text-align:center;
-      ">
-        <div style="margin-bottom:1rem;">
-          <!-- Waveform bars -->
-          <div id="wave-{key}" style="display:none; justify-content:center; align-items:center; gap:4px; height:40px; margin-bottom:1rem;">
-            {''.join([f'<div style="width:4px;background:#6ee7f7;border-radius:2px;height:6px;animation:wb 0.8s ease-in-out infinite {i*0.1}s"></div>' for i in range(10)])}
-          </div>
-          <style>
-            @keyframes wb {{ 0%,100%{{height:6px}} 50%{{height:28px}} }}
-          </style>
-        </div>
+def generate_summary(evaluations, role):
+    scores = [e.get("overall_score", 0) for e in evaluations]
+    avg = sum(scores) / len(scores) if scores else 0
+    system = "You are a career coach writing concise interview performance summaries."
+    prompt = f"""Role applied: {role}
+Average score: {avg:.0f}/100
+Individual scores: {scores}
 
-        <button id="btn-rec-{key}" onclick="startRec()" style="
-          background:linear-gradient(135deg,#f472b6,#ec4899);
-          color:white; border:none; border-radius:12px;
-          padding:14px 28px; font-weight:800; font-size:15px;
-          cursor:pointer; font-family:'Outfit',sans-serif;
-          box-shadow:0 6px 20px rgba(244,114,182,0.35);
-          letter-spacing:0.02em; transition:all 0.2s;
-          display:flex; align-items:center; gap:10px; margin:0 auto;
-        " onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">
-          🎤 Start Speaking
-        </button>
+Write a 3-sentence performance summary covering: overall performance, key strengths, and top area to improve.
+Be specific and encouraging but honest."""
+    return llm(prompt, system)
 
-        <button id="btn-stop-rec-{key}" onclick="stopRec()" style="
-          background:rgba(251,191,36,0.15);
-          color:#fbbf24; border:1px solid rgba(251,191,36,0.35);
-          border-radius:12px; padding:14px 28px;
-          font-weight:800; font-size:15px; cursor:pointer;
-          font-family:'Outfit',sans-serif; display:none;
-          align-items:center; gap:10px; margin:0 auto;
-          transition:all 0.2s;
-        ">⏹ Stop Recording</button>
+# ── Score color helper ─────────────────────────────────────────────────────────
+def score_color(score):
+    if score >= 80: return "#10b981"
+    if score >= 60: return "#f59e0b"
+    if score >= 40: return "#f97316"
+    return "#ef4444"
 
-        <div id="rec-status-{key}" style="color:#6666aa; font-size:13px; margin-top:1rem;"></div>
-        <div id="rec-live-{key}" style="
-          color:#eeeeff; font-size:0.95rem; margin-top:1rem;
-          min-height:40px; text-align:left;
-          background:rgba(255,255,255,0.03);
-          border-radius:8px; padding:0.75rem;
-          border:1px solid rgba(255,255,255,0.07);
-          display:none; line-height:1.6;
-          font-family:'Outfit',sans-serif;
-        "></div>
-      </div>
+def score_label(score):
+    if score >= 80: return "Excellent"
+    if score >= 60: return "Good"
+    if score >= 40: return "Fair"
+    return "Needs Work"
 
-      <!-- Hidden input to communicate transcript to Streamlit via URL trick -->
-      <textarea id="transcript-out-{key}" style="display:none;"></textarea>
-    </div>
+# ── SVG ring ──────────────────────────────────────────────────────────────────
+def score_ring_svg(score, size=120, label="Score"):
+    r = 44
+    circ = 2 * 3.14159 * r
+    fill = (score / 100) * circ
+    color = score_color(score)
+    return f"""
+<svg width="{size}" height="{size}" viewBox="0 0 100 100">
+  <circle cx="50" cy="50" r="{r}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="8"/>
+  <circle cx="50" cy="50" r="{r}" fill="none" stroke="{color}" stroke-width="8"
+    stroke-dasharray="{fill:.1f} {circ:.1f}" stroke-dashoffset="{circ/4:.1f}"
+    stroke-linecap="round" style="filter:drop-shadow(0 0 6px {color}88)"/>
+  <text x="50" y="46" text-anchor="middle" fill="{color}"
+    font-family="Syne,sans-serif" font-size="18" font-weight="800">{score}</text>
+  <text x="50" y="60" text-anchor="middle" fill="rgba(232,234,240,.4)"
+    font-family="DM Mono,monospace" font-size="7" letter-spacing="1">{label.upper()}</text>
+</svg>"""
 
-    <script>
-      var recog_{key} = null;
-      var fullTranscript_{key} = '';
+# ── Step tracker ──────────────────────────────────────────────────────────────
+def render_steps():
+    step = st.session_state.step
+    steps = ["Setup", "Interview", "Results"]
+    dots, texts = "", ""
+    for i, s in enumerate(steps):
+        if i < step: cls = "done"; icon = "✓"
+        elif i == step: cls = "active"; icon = str(i + 1)
+        else: cls = "idle"; icon = str(i + 1)
+        dots += f'<div class="step-item"><div class="step-dot {cls}">{icon}</div><span class="step-text {cls}">{s}</span></div>'
+    st.markdown(f'<div class="steps">{dots}</div>', unsafe_allow_html=True)
 
-      function startRec() {{
-        var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if(!SR) {{
-          document.getElementById('rec-status-{key}').innerText = '⚠️ Speech recognition not supported in this browser. Use Chrome.';
-          return;
-        }}
-        recog_{key} = new SR();
-        recog_{key}.continuous = true;
-        recog_{key}.interimResults = true;
-        recog_{key}.lang = 'en-US';
-        fullTranscript_{key} = '';
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 0 — CONFIG
+# ══════════════════════════════════════════════════════════════════════════════
+def page_config():
+    render_steps()
+    col1, col2 = st.columns([1.1, .9], gap="large")
 
-        recog_{key}.onstart = () => {{
-          document.getElementById('btn-rec-{key}').style.display='none';
-          document.getElementById('btn-stop-rec-{key}').style.display='flex';
-          document.getElementById('wave-{key}').style.display='flex';
-          document.getElementById('rec-status-{key}').innerHTML='<span style="color:#f472b6">● Recording...</span>';
-          document.getElementById('rec-live-{key}').style.display='block';
-        }};
+    with col1:
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown('<p class="section-label">⚙ Configuration</p>', unsafe_allow_html=True)
+        st.markdown("#### Interview Setup")
 
-        recog_{key}.onresult = (e) => {{
-          var interim = '';
-          var final = '';
-          for(var i = e.resultIndex; i < e.results.length; i++) {{
-            if(e.results[i].isFinal) final += e.results[i][0].transcript + ' ';
-            else interim += e.results[i][0].transcript;
-          }}
-          fullTranscript_{key} += final;
-          document.getElementById('rec-live-{key}').innerHTML =
-            '<span style="color:#eeeeff">' + fullTranscript_{key} + '</span>' +
-            '<span style="color:#6666aa;font-style:italic">' + interim + '</span>';
-          // Store in textarea for reading
-          document.getElementById('transcript-out-{key}').value = fullTranscript_{key} + interim;
-        }};
+        api_key = st.text_input("Groq API Key", type="password",
+                                placeholder="gsk_...",
+                                value=st.session_state.groq_key,
+                                help="Get a free key at console.groq.com")
+        st.session_state.groq_key = api_key
 
-        recog_{key}.onerror = (e) => {{
-          document.getElementById('rec-status-{key}').innerText = '⚠️ Error: ' + e.error;
-          stopRec();
-        }};
+        role = st.text_input("Target Role", placeholder="e.g. Backend Engineer, Data Scientist",
+                             value=st.session_state.role)
+        st.session_state.role = role
 
-        recog_{key}.onend = () => {{
-          if(fullTranscript_{key}) {{
-            document.getElementById('rec-status-{key}').innerHTML =
-              '<span style="color:#34d399">✓ Captured ' + fullTranscript_{key}.trim().split(' ').length + ' words</span>';
-          }}
-        }};
+        col_a, col_b = st.columns(2)
+        with col_a:
+            domain = st.selectbox("Domain", [
+                "Software Engineering", "Data Science", "Machine Learning",
+                "DevOps / Cloud", "Frontend Engineering",
+                "Cybersecurity", "Product Management", "System Design"
+            ], index=["Software Engineering","Data Science","Machine Learning",
+                      "DevOps / Cloud","Frontend Engineering",
+                      "Cybersecurity","Product Management","System Design"].index(st.session_state.domain)
+                      if st.session_state.domain in ["Software Engineering","Data Science","Machine Learning",
+                      "DevOps / Cloud","Frontend Engineering","Cybersecurity","Product Management","System Design"] else 0)
+            st.session_state.domain = domain
 
-        recog_{key}.start();
-      }}
+        with col_b:
+            difficulty = st.selectbox("Difficulty", ["Easy", "Medium", "Hard", "Expert"],
+                                      index=["Easy","Medium","Hard","Expert"].index(st.session_state.difficulty))
+            st.session_state.difficulty = difficulty
 
-      function stopRec() {{
-        if(recog_{key}) recog_{key}.stop();
-        document.getElementById('btn-rec-{key}').style.display='flex';
-        document.getElementById('btn-stop-rec-{key}').style.display='none';
-        document.getElementById('wave-{key}').style.display='none';
-      }}
-    </script>
-    """, height=280, scrolling=False)
+        num_q = st.slider("Number of Questions", 3, 10, st.session_state.num_q)
+        st.session_state.num_q = num_q
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SIDEBAR
-# ═══════════════════════════════════════════════════════════════════════════════
-with st.sidebar:
-    st.markdown("""
-    <div class="sb-logo">VoiceCoach AI</div>
-    <div class="sb-sub">Interview Mastery System</div>
-    """, unsafe_allow_html=True)
-
-    api_key = st.text_input("🔑 Groq API Key", type="password",
-                             value=st.session_state.api_key, placeholder="gsk_...")
-    if api_key:
-        st.session_state.api_key = api_key
-        st.markdown('<span class="chip chip-green">✓ API Key Active</span>', unsafe_allow_html=True)
-    else:
-        st.markdown('<span class="chip chip-amber">⚠ Key Required</span>', unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Phase indicator
-    phase_map = {"setup": ("⚙️ Setup", "chip-purple"), "interview": ("🎤 Live", "chip-pink"), "results": ("📊 Results", "chip-green")}
-    label, color = phase_map[st.session_state.phase]
-    st.markdown(f'<span class="chip {color}">{label}</span>', unsafe_allow_html=True)
-
-    # Progress during interview
-    if st.session_state.phase == "interview":
-        st.markdown("---")
-        q_done = st.session_state.current_q
-        q_total = len(st.session_state.questions)
-        pct = (q_done / max(q_total, 1)) * 100
-        st.markdown(f"""
-        <div class="card-label">Progress — {q_done}/{q_total}</div>
-        <div class="prog-wrap"><div class="prog-fill" style="width:{pct:.0f}%"></div></div>
-        """, unsafe_allow_html=True)
-
-        # Scores so far
-        if st.session_state.scores:
-            avg = sum(st.session_state.scores) / len(st.session_state.scores)
-            st.markdown(f"""
-            <div class="glass-card" style="text-align:center;padding:1rem;">
-              <div class="card-label">Running Avg</div>
-              <div style="font-size:2rem;font-weight:800;color:var(--c1);">{avg:.0f}</div>
-              <div style="color:var(--muted);font-size:0.78rem;">/ 100</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    if st.session_state.phase != "setup":
-        if st.button("🔄 New Session"):
-            for k in list(st.session_state.keys()):
-                del st.session_state[k]
-            st.rerun()
-
-    st.markdown("""
-    <div style="margin-top:1.5rem;">
-      <div class="card-label" style="margin-bottom:0.75rem;">Quick Tips</div>
-      <div style="color:var(--muted);font-size:0.82rem;line-height:2;">
-        💡 STAR method for behaviorals<br>
-        ⏱️ Aim for 90–120 sec answers<br>
-        🎯 Cite specific examples<br>
-        📊 Quantify achievements<br>
-        🗣️ Speak clearly & confidently
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PHASE: SETUP
-# ═══════════════════════════════════════════════════════════════════════════════
-if st.session_state.phase == "setup":
-
-    # Hero
-    st.markdown("""
-    <div class="hero">
-      <div class="hero-orb1"></div>
-      <div class="hero-orb2"></div>
-      <div class="hero-badge">🎙 AI-Powered · Voice + Text · Free with Groq</div>
-      <div class="hero-title">Master Your<br/>Interview Skills</div>
-      <div class="hero-sub">
-        Practice with an AI interviewer that asks questions in voice or text,
-        evaluates your answers in real-time, and coaches your pronunciation
-        and communication skills.
-      </div>
-      <div class="hero-chips">
-        <span class="hchip">🎤 Voice Input</span>
-        <span class="hchip">🔊 Voice Questions</span>
-        <span class="hchip">🗣️ Pronunciation Coach</span>
-        <span class="hchip">📊 Communication Score</span>
-        <span class="hchip">🤖 AI Feedback</span>
-        <span class="hchip">50+ Job Roles</span>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── STEP 1: Mode Selection ─────────────────────────────────────────────────
-    st.markdown("""
-    <div style="font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:800;margin-bottom:0.25rem;">
-      Step 1 — Choose Your Interview Mode
-    </div>
-    <div style="color:var(--muted);font-size:0.9rem;margin-bottom:1.5rem;">
-      How should the AI ask questions? How will you answer?
-    </div>
-    """, unsafe_allow_html=True)
-
-    col_q, col_a = st.columns(2, gap="large")
-
-    with col_q:
-        st.markdown('<div class="card-label" style="margin-bottom:0.75rem;">🔊 Question Delivery Mode</div>', unsafe_allow_html=True)
-        q_mode = st.session_state.question_mode
-
-        st.markdown(f"""
-        <div class="mode-grid">
-          <div class="mode-card {'active' if q_mode=='text' else ''}" onclick="this.closest('[data-testid]')" id="qm-text">
-            <div class="mode-icon">📝</div>
-            <div class="mode-title">Text</div>
-            <div class="mode-desc">Questions shown as text on screen</div>
-          </div>
-          <div class="mode-card {'active' if q_mode=='voice' else ''}" id="qm-voice">
-            <div class="mode-icon">🔊</div>
-            <div class="mode-title">Voice</div>
-            <div class="mode-desc">AI speaks questions aloud to you</div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        qm_col1, qm_col2 = st.columns(2)
-        with qm_col1:
-            if st.button("📝 Text Mode", key="qm_text"):
-                st.session_state.question_mode = "text"
-                st.rerun()
-        with qm_col2:
-            if st.button("🔊 Voice Mode", key="qm_voice"):
-                st.session_state.question_mode = "voice"
-                st.rerun()
-
-        active_qmode = "chip-blue" if st.session_state.question_mode == "voice" else "chip-purple"
-        st.markdown(f'<span class="chip {active_qmode}">Selected: {st.session_state.question_mode.title()} Mode</span>', unsafe_allow_html=True)
-
-    with col_a:
-        st.markdown('<div class="card-label" style="margin-bottom:0.75rem;">🎤 Answer Input Mode</div>', unsafe_allow_html=True)
-        a_mode = st.session_state.answer_mode
-
-        st.markdown(f"""
-        <div class="mode-grid">
-          <div class="mode-card {'active' if a_mode=='text' else ''}" id="am-text">
-            <div class="mode-icon">⌨️</div>
-            <div class="mode-title">Type</div>
-            <div class="mode-desc">Type your answers using keyboard</div>
-          </div>
-          <div class="mode-card {'active' if a_mode=='voice' else ''}" id="am-voice">
-            <div class="mode-icon">🎤</div>
-            <div class="mode-title">Speak</div>
-            <div class="mode-desc">Speak your answers — AI transcribes</div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        am_col1, am_col2 = st.columns(2)
-        with am_col1:
-            if st.button("⌨️ Type Mode", key="am_text"):
-                st.session_state.answer_mode = "text"
-                st.rerun()
-        with am_col2:
-            if st.button("🎤 Speak Mode", key="am_voice"):
-                st.session_state.answer_mode = "voice"
-                st.rerun()
-
-        active_amode = "chip-pink" if st.session_state.answer_mode == "voice" else "chip-purple"
-        st.markdown(f'<span class="chip {active_amode}">Selected: {st.session_state.answer_mode.title()} Mode</span>', unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # ── STEP 2: Interview Config ───────────────────────────────────────────────
-    st.markdown("""
-    <div style="font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:800;margin-bottom:0.25rem;">
-      Step 2 — Configure Your Interview
-    </div>
-    <div style="color:var(--muted);font-size:0.9rem;margin-bottom:1.5rem;">
-      Personalize the difficulty, role, and focus area.
-    </div>
-    """, unsafe_allow_html=True)
-
-    tab_cfg, tab_resume, tab_howto = st.tabs(["⚙️ Settings", "📄 Resume", "❓ How It Works"])
-
-    with tab_cfg:
-        c1, c2 = st.columns(2, gap="large")
-        with c1:
-            job_role = st.selectbox("Job Role", JOB_ROLES)
-            interview_type = st.selectbox("Interview Type", INTERVIEW_TYPES)
-            focus_area = st.text_input(
-                "Specific Focus Area (optional)",
-                placeholder="e.g., Tokenization, NLP, System Design, React Hooks",
-                help="Adds a topic focus ON TOP of your selected role. ML Engineer + Tokenization = questions about tokenization for ML."
-            )
-            # Combine role + focus area — do NOT replace, just add context
-            if focus_area.strip():
-                job_role_final = f"{job_role} with deep focus on {focus_area.strip()}"
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🚀  Generate Interview", use_container_width=True):
+            if not api_key.strip():
+                st.error("Please enter your Groq API key.")
+            elif not role.strip():
+                st.error("Please enter the target role.")
             else:
-                job_role_final = job_role
-
-        with c2:
-            difficulty = st.selectbox("Difficulty", DIFFICULTY_LEVELS, index=1)
-            num_questions = st.slider("Number of Questions", 3, 15, 5)
-            time_per_q = st.slider("Seconds per Question", 60, 300, 120, step=30)
-
-        # Show preview of interview focus
-        if focus_area.strip():
-            st.markdown(f"""
-            <div class="glass-card" style="background:rgba(110,231,247,0.05);border-color:rgba(110,231,247,0.25);margin-top:0.75rem;">
-              <div style="color:var(--c1);font-size:0.8rem;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.4rem;">✅ Interview Focus Preview</div>
-              <div style="color:var(--text);font-size:0.95rem;">
-                <strong>{job_role}</strong> + focus on <strong style="color:var(--c1);">{focus_area.strip()}</strong><br>
-                <span style="color:var(--muted);font-size:0.85rem;">Questions will cover {focus_area.strip()} specifically in the context of {job_role} work.</span>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            job_role_final = job_role
-
-        st.markdown(f"""
-        <div class="glass-card" style="background:rgba(99,102,241,0.05);border-color:rgba(99,102,241,0.2);margin-top:0.75rem;">
-          <div style="color:#a78bfa;font-weight:700;margin-bottom:0.5rem;">🤖 AI Engine</div>
-          <div style="color:var(--muted);font-size:0.88rem;">
-            <strong style="color:var(--text)">llama-3.1-8b-instant</strong> via Groq —
-            ultra-fast inference for real-time feedback. Get your free key at
-            <strong style="color:var(--c1)">console.groq.com</strong>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with tab_resume:
-        st.markdown('<div style="color:var(--muted);font-size:0.88rem;margin-bottom:1rem;">Paste your resume to get personalized, tailored questions.</div>', unsafe_allow_html=True)
-        resume_text = st.text_area("Resume Text", placeholder="Paste your resume here...", height=280, label_visibility="collapsed")
-        if resume_text:
-            wc = len(resume_text.split())
-            st.markdown(f'<span class="chip chip-green">📝 {wc} words</span>', unsafe_allow_html=True)
-
-    with tab_howto:
-        steps = [
-            ("🎙", "Choose Mode", "Pick voice or text for both questions and answers — mix and match freely."),
-            ("⚙️", "Configure", "Select role, type, difficulty and number of questions."),
-            ("🎤", "Answer", "Speak or type each answer within the countdown timer."),
-            ("🤖", "Get Feedback", "AI scores your answer AND analyzes pronunciation + communication."),
-            ("📊", "Full Report", "Review detailed scores, corrections, and improvement tips."),
-        ]
-        for icon, title, desc in steps:
-            st.markdown(f"""
-            <div class="glass-card" style="display:flex;gap:1rem;align-items:flex-start;margin-bottom:0.75rem;">
-              <div style="font-size:1.5rem;flex-shrink:0;">{icon}</div>
-              <div>
-                <div style="font-weight:700;margin-bottom:0.2rem;">{title}</div>
-                <div style="color:var(--muted);font-size:0.87rem;">{desc}</div>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # ── Launch ─────────────────────────────────────────────────────────────────
-    col_btn, col_info = st.columns([2, 3])
-    with col_btn:
-        if st.button("🚀 Launch Interview Session", use_container_width=True):
-            if not st.session_state.api_key:
-                st.error("⚠️ Enter your Groq API key in the sidebar.")
-            else:
-                with st.spinner("🤖 Generating personalized questions..."):
+                with st.spinner(""):
+                    st.markdown('<div class="typing"><span></span><span></span><span></span></div>',
+                                unsafe_allow_html=True)
                     try:
-                        interviewer = GroqInterviewer(st.session_state.api_key)
-                        questions = interviewer.generate_questions(
-                            job_role=job_role_final if 'job_role_final' in locals() else job_role,
-                            interview_type=interview_type,
-                            difficulty=difficulty,
-                            num_questions=num_questions,
-                            resume_text=resume_text if 'resume_text' in locals() else "",
-                        )
-                        st.session_state.update({
-                            "phase": "interview",
-                            "questions": questions,
-                            "job_role": job_role_final if 'job_role_final' in locals() else job_role,
-                            "interview_type": interview_type,
-                            "difficulty": difficulty,
-                            "num_questions": num_questions,
-                            "time_per_q": time_per_q,
-                            "interviewer": interviewer,
-                            "resume_text": resume_text if 'resume_text' in locals() else "",
-                            "start_time": time.time(),
-                            "q_start_time": time.time(),
-                            "current_q": 0,
-                            "answers": [], "feedbacks": [], "scores": [],
-                            "pronunciation_reports": [], "communication_scores": [],
-                            "follow_ups": [], "cached_summary": None,
-                            "voice_transcript": "",
-                        })
+                        qs = generate_questions(role, domain, difficulty, num_q)
+                        st.session_state.questions = qs
+                        st.session_state.current_q = 0
+                        st.session_state.answers = []
+                        st.session_state.evaluations = []
+                        st.session_state.step = 1
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ {e}")
-    with col_info:
-        if st.session_state.api_key:
-            st.success(f"✅ Ready! {num_questions if 'num_questions' in dir() else 5} questions · {st.session_state.question_mode.title()} questions · {st.session_state.answer_mode.title()} answers")
-        else:
-            st.warning("🔑 Add your Groq API key in the sidebar to begin")
+                        st.error(f"Error: {e}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
+    with col2:
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown('<p class="section-label">ℹ How it works</p>', unsafe_allow_html=True)
+        steps_info = [
+            ("01", "Configure", "Set your role, domain & difficulty"),
+            ("02", "Interview", "Answer AI-generated questions"),
+            ("03", "Evaluate", "Get scored on accuracy & depth"),
+            ("04", "Feedback", "Detailed review & improvement tips"),
+        ]
+        for n, title, desc in steps_info:
+            st.markdown(f"""
+<div style="display:flex;gap:.9rem;align-items:flex-start;margin-bottom:1.1rem">
+  <span style="font-family:'DM Mono',monospace;font-size:.7rem;color:#6366f1;
+        background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.25);
+        padding:.25rem .5rem;border-radius:6px;min-width:2.8rem;text-align:center">{n}</span>
+  <div>
+    <div style="font-weight:600;font-size:.9rem;margin-bottom:.15rem">{title}</div>
+    <div style="font-family:'DM Mono',monospace;font-size:.72rem;color:rgba(232,234,240,.4)">{desc}</div>
+  </div>
+</div>""", unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PHASE: INTERVIEW
-# ═══════════════════════════════════════════════════════════════════════════════
-elif st.session_state.phase == "interview":
-    questions = st.session_state.questions
-    current_q = st.session_state.current_q
+        st.markdown('<div class="fancy-divider"></div>', unsafe_allow_html=True)
+        st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:.72rem;color:rgba(232,234,240,.35);line-height:1.8">
+Powered by <span style="color:#6366f1">Groq LLaMA 3.3 70B</span><br>
+Evaluates: accuracy · depth · keywords<br>
+Provides: scores · feedback · gaps</div>""", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    if current_q >= len(questions):
-        st.session_state.phase = "results"
-        st.session_state.total_time = time.time() - st.session_state.start_time
-        st.rerun()
-
-    q_text = questions[current_q]
-
-    # ── Header row ─────────────────────────────────────────────────────────────
-    col_hdr, col_timer = st.columns([3, 1])
-    with col_hdr:
-        st.markdown(f"""
-        <div class="fade-up">
-          <div style="font-family:'Playfair Display',serif;font-size:2rem;font-weight:800;">Live Interview</div>
-          <div style="color:var(--muted);font-size:0.88rem;margin-top:0.25rem;">
-            {st.session_state.job_role} ·
-            <span class="chip chip-purple" style="font-size:0.7rem;">{st.session_state.interview_type}</span>
-            <span class="chip chip-blue" style="font-size:0.7rem;margin-left:0.3rem;">{st.session_state.difficulty}</span>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col_timer:
-        elapsed = int(time.time() - st.session_state.q_start_time)
-        remaining = max(0, st.session_state.time_per_q - elapsed)
-        tcls = "timer-danger" if remaining < 30 else "timer-warn" if remaining < 60 else ""
-        st.markdown(f"""
-        <div class="timer-box {tcls}">{remaining//60:02d}:{remaining%60:02d}</div>
-        <div style="text-align:center;color:var(--muted);font-size:0.72rem;margin-top:0.3rem;">TIME LEFT</div>
-        """, unsafe_allow_html=True)
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 1 — INTERVIEW
+# ══════════════════════════════════════════════════════════════════════════════
+def page_interview():
+    render_steps()
+    qs = st.session_state.questions
+    idx = st.session_state.current_q
+    total = len(qs)
 
     # Progress bar
-    pct = current_q / len(questions) * 100
+    prog_pct = idx / total
+    st.progress(prog_pct)
     st.markdown(f"""
-    <div style="display:flex;justify-content:space-between;color:var(--muted);font-size:0.8rem;margin-bottom:0.3rem;">
-      <span>Question {current_q+1} of {len(questions)}</span>
-      <span>{pct:.0f}% complete</span>
-    </div>
-    <div class="prog-wrap"><div class="prog-fill" style="width:{pct}%"></div></div>
-    """, unsafe_allow_html=True)
+<div style="font-family:'DM Mono',monospace;font-size:.72rem;color:rgba(232,234,240,.4);
+     text-align:right;margin-top:-.5rem;margin-bottom:1rem">
+  Question <span style="color:#6366f1">{idx+1}</span> of {total}
+</div>""", unsafe_allow_html=True)
 
-    # ── Question Panel ─────────────────────────────────────────────────────────
-    st.markdown(f"""
-    <div class="question-panel">
-      <div class="q-number">Q{current_q+1}/{len(questions)}</div>
-      <div class="q-badge">🎯 Interview Question</div>
-      <div class="q-text">{q_text}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Past answers sidebar-style
+    if st.session_state.evaluations:
+        with st.expander(f"📊 Answered ({len(st.session_state.evaluations)}/{total})"):
+            for i, ev in enumerate(st.session_state.evaluations):
+                color = score_color(ev.get('overall_score', 0))
+                st.markdown(f"""
+<div class="hist-item">
+  <div class="hist-q">Q{i+1}: {qs[i]['question'][:70]}...</div>
+  <span class="hist-score" style="color:{color}">Score: {ev.get('overall_score',0)}/100 · {score_label(ev.get('overall_score',0))}</span>
+</div>""", unsafe_allow_html=True)
 
-    # TTS button if voice mode
-    if st.session_state.question_mode == "voice":
-        render_tts(q_text, key=f"q{current_q}")
-        st.markdown("""
-        <div style="color:var(--muted);font-size:0.82rem;margin-top:0.5rem;">
-          🔊 Voice mode active — click above to hear the question read aloud.
-        </div>
-        """, unsafe_allow_html=True)
+    if idx < total:
+        q = qs[idx]
+        col1, col2 = st.columns([.2, .8])
+        with col1:
+            cat_colors = {"concept":"#6366f1","algorithm":"#10b981","system":"#f59e0b",
+                          "behavioral":"#ec4899","design":"#14b8a6","default":"#6366f1"}
+            cat = q.get("category","").lower()
+            c = cat_colors.get(cat, cat_colors["default"])
+            st.markdown(f'<div style="font-family:\'DM Mono\',monospace;font-size:.65rem;'
+                        f'color:{c};border:1px solid {c}44;padding:.2rem .5rem;border-radius:3rem;'
+                        f'text-align:center;background:{c}11">{q.get("category","General")}</div>',
+                        unsafe_allow_html=True)
+        with col2:
+            pass
 
-    # ── Previous feedback peek ─────────────────────────────────────────────────
-    if st.session_state.feedbacks:
-        with st.expander("👁 View Last Answer Feedback"):
-            last_score = st.session_state.scores[-1]
-            last_fb = st.session_state.feedbacks[-1]
-            fb_cls = "fb-excellent" if last_score >= 80 else "fb-good" if last_score >= 60 else "fb-average" if last_score >= 40 else "fb-poor"
-            score_col = ("var(--c4)" if last_score >= 80 else "var(--c1)" if last_score >= 60
-                        else "var(--c5)" if last_score >= 40 else "var(--c3)")
-            st.markdown(f"""
-            <div class="fb-panel {fb_cls}">
-              <div class="fb-score" style="color:{score_col};">{last_score}/100</div>
-              <div style="color:var(--muted);font-size:0.78rem;margin-bottom:0.75rem;">Previous Answer Score</div>
-              <div style="color:var(--text);line-height:1.75;font-size:0.95rem;">{last_fb}</div>
-            </div>
-            """, unsafe_allow_html=True)
+        st.markdown(f'<div class="q-bubble">{q["question"]}</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Answer Section ─────────────────────────────────────────────────────────
-    st.markdown("""
-    <div style="font-weight:700;font-size:0.82rem;text-transform:uppercase;
-                letter-spacing:0.1em;color:var(--muted);margin:1.25rem 0 0.5rem;">
-      ✍️ Your Answer
-    </div>
-    """, unsafe_allow_html=True)
-
-    answer_text = ""
-
-    if st.session_state.answer_mode == "voice":
-        st.markdown("""
-        <div style="background:rgba(244,114,182,0.06);border:1px solid rgba(244,114,182,0.25);
-                    border-radius:14px;padding:1.25rem;margin-bottom:1rem;">
-          <div style="color:var(--c3);font-weight:700;font-size:0.88rem;margin-bottom:0.5rem;">🎤 Voice Answer Mode</div>
-          <div style="color:var(--muted);font-size:0.85rem;line-height:1.6;">
-            <strong style="color:var(--text);">How to use:</strong><br>
-            1. Click <strong style="color:var(--c3);">Start Recording</strong> below<br>
-            2. Allow microphone when Chrome asks<br>
-            3. Speak your answer clearly<br>
-            4. Click <strong style="color:var(--c5);">Stop Recording</strong> when done<br>
-            5. Copy the transcript shown and paste it in the text box below<br>
-            6. Click Submit ✅
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Inline voice recorder — no key conflict
-        waveform_bars = "".join([
-            f'<div style="width:4px;background:#6ee7f7;border-radius:2px;height:6px;'
-            f'animation:wb 0.8s ease-in-out infinite {i*0.1:.1f}s"></div>'
-            for i in range(10)
-        ])
-        stt_uid = f"q{current_q}"
-        components.html(f"""
-        <style>
-          @keyframes wb {{ 0%,100%{{height:6px}} 50%{{height:28px}} }}
-          @keyframes blink {{ 0%,100%{{opacity:1}} 50%{{opacity:0.3}} }}
-          .rec-btn {{ cursor:pointer; border:none; border-radius:12px; padding:12px 24px;
-                      font-weight:800; font-size:14px; font-family:sans-serif;
-                      display:inline-flex; align-items:center; gap:8px; transition:all 0.2s; }}
-          .rec-btn:hover {{ transform:translateY(-2px); }}
-        </style>
-        <div style="font-family:sans-serif; padding:4px;">
-          <div id="wave-{stt_uid}" style="display:none;justify-content:center;align-items:center;
-               gap:4px;height:36px;margin-bottom:12px;">
-            {waveform_bars}
-          </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-            <button class="rec-btn" id="btn-start-{stt_uid}" onclick="startRec_{stt_uid}()"
-              style="background:linear-gradient(135deg,#f472b6,#ec4899);color:white;
-                     box-shadow:0 4px 15px rgba(244,114,182,0.4);">
-              🎤 Start Recording
-            </button>
-            <button class="rec-btn" id="btn-stop-{stt_uid}" onclick="stopRec_{stt_uid}()"
-              style="background:rgba(251,191,36,0.15);color:#fbbf24;
-                     border:1px solid rgba(251,191,36,0.4);display:none;">
-              ⏹ Stop Recording
-            </button>
-          </div>
-          <div id="status-{stt_uid}" style="color:#6666aa;font-size:13px;margin-bottom:8px;"></div>
-          <div id="live-{stt_uid}" style="display:none;background:rgba(255,255,255,0.04);
-               border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;
-               min-height:60px;font-size:14px;line-height:1.6;color:#eeeeff;
-               max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
-          <div id="copy-area-{stt_uid}" style="display:none;">
-            <div style="color:#34d399;font-size:13px;font-weight:700;margin-bottom:6px;">
-              ✅ Recording complete! Copy the text below and paste it in the answer box:
-            </div>
-            <textarea id="final-text-{stt_uid}" style="width:100%;background:rgba(52,211,153,0.06);
-              border:1px solid rgba(52,211,153,0.3);border-radius:8px;padding:10px;
-              color:#eeeeff;font-size:13px;font-family:sans-serif;resize:vertical;min-height:80px;"></textarea>
-            <button onclick="copyText_{stt_uid}()" style="margin-top:8px;background:rgba(52,211,153,0.15);
-              color:#34d399;border:1px solid rgba(52,211,153,0.35);border-radius:8px;
-              padding:8px 16px;font-weight:700;cursor:pointer;font-family:sans-serif;font-size:13px;">
-              📋 Copy to Clipboard
-            </button>
-          </div>
-        </div>
-        <script>
-          var recog_{stt_uid} = null;
-          var full_{stt_uid} = '';
-
-          function startRec_{stt_uid}() {{
-            var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) {{
-              document.getElementById('status-{stt_uid}').innerHTML =
-                '<span style="color:#f472b6">⚠️ Use Google Chrome for voice recording!</span>';
-              return;
-            }}
-            full_{stt_uid} = '';
-            recog_{stt_uid} = new SR();
-            recog_{stt_uid}.continuous = true;
-            recog_{stt_uid}.interimResults = true;
-            recog_{stt_uid}.lang = 'en-US';
-
-            recog_{stt_uid}.onstart = function() {{
-              document.getElementById('btn-start-{stt_uid}').style.display = 'none';
-              document.getElementById('btn-stop-{stt_uid}').style.display = 'inline-flex';
-              document.getElementById('wave-{stt_uid}').style.display = 'flex';
-              document.getElementById('live-{stt_uid}').style.display = 'block';
-              document.getElementById('copy-area-{stt_uid}').style.display = 'none';
-              document.getElementById('status-{stt_uid}').innerHTML =
-                '<span style="color:#f472b6;animation:blink 1s infinite">● Recording... Speak now</span>';
-            }};
-
-            recog_{stt_uid}.onresult = function(e) {{
-              var interim = '';
-              var final_part = '';
-              for (var i = e.resultIndex; i < e.results.length; i++) {{
-                if (e.results[i].isFinal) final_part += e.results[i][0].transcript + ' ';
-                else interim += e.results[i][0].transcript;
-              }}
-              full_{stt_uid} += final_part;
-              document.getElementById('live-{stt_uid}').innerHTML =
-                '<span style="color:#eeeeff">' + full_{stt_uid} + '</span>' +
-                '<span style="color:#6666aa;font-style:italic">' + interim + '</span>';
-            }};
-
-            recog_{stt_uid}.onerror = function(e) {{
-              document.getElementById('status-{stt_uid}').innerHTML =
-                '<span style="color:#f472b6">⚠️ Error: ' + e.error + ' — Allow microphone in Chrome settings</span>';
-              stopRec_{stt_uid}();
-            }};
-
-            recog_{stt_uid}.onend = function() {{
-              var words = full_{stt_uid}.trim().split(' ').filter(w => w).length;
-              document.getElementById('status-{stt_uid}').innerHTML =
-                '<span style="color:#34d399">✅ Captured ' + words + ' words</span>';
-              document.getElementById('wave-{stt_uid}').style.display = 'none';
-              if (full_{stt_uid}.trim()) {{
-                document.getElementById('copy-area-{stt_uid}').style.display = 'block';
-                document.getElementById('final-text-{stt_uid}').value = full_{stt_uid}.trim();
-              }}
-            }};
-
-            recog_{stt_uid}.start();
-          }}
-
-          function stopRec_{stt_uid}() {{
-            if (recog_{stt_uid}) recog_{stt_uid}.stop();
-            document.getElementById('btn-start-{stt_uid}').style.display = 'inline-flex';
-            document.getElementById('btn-stop-{stt_uid}').style.display = 'none';
-            document.getElementById('wave-{stt_uid}').style.display = 'none';
-          }}
-
-          function copyText_{stt_uid}() {{
-            var ta = document.getElementById('final-text-{stt_uid}');
-            ta.select();
-            document.execCommand('copy');
-            document.getElementById('status-{stt_uid}').innerHTML =
-              '<span style="color:#34d399">📋 Copied! Now paste it in the answer box below.</span>';
-          }}
-        </script>
-        """, height=380)
-
-        st.markdown("""
-        <div style="color:var(--muted);font-size:0.82rem;margin:0.75rem 0 0.4rem;">
-          📋 Paste your transcribed answer here, then click Submit:
-        </div>
-        """, unsafe_allow_html=True)
-        answer_text = st.text_area(
-            "Transcribed Answer",
-            placeholder="Paste your transcribed speech here, or type your answer directly...",
+        answer = st.text_area(
+            "Your Answer",
             height=180,
-            label_visibility="collapsed",
-            key=f"ans_voice_{current_q}"
-        )
-    else:
-        answer_text = st.text_area(
-            "Type your answer",
-            placeholder="Type your answer here...\n\n💡 Tips:\n• STAR format: Situation → Task → Action → Result\n• Be specific with examples and metrics\n• Aim for 2–3 minutes of speaking time",
-            height=220,
-            label_visibility="collapsed",
-            key=f"ans_text_{current_q}"
+            placeholder="Type your answer here… be thorough and specific.",
+            key=f"ans_{idx}",
+            label_visibility="collapsed"
         )
 
-    # ── Action Buttons ─────────────────────────────────────────────────────────
-    col_sub, col_skip, col_hint = st.columns([3, 1.5, 1.5])
-
-    with col_sub:
-        btn_label = "✅ Submit & Get Full Feedback" if current_q < len(questions) - 1 else "🏁 Submit Final Answer"
-        if st.button(btn_label, use_container_width=True):
-            if not answer_text.strip():
-                st.warning("⚠️ Please provide an answer before submitting.")
-            else:
-                with st.spinner("🤖 Analyzing answer, pronunciation & communication..."):
-                    try:
-                        # Content feedback
-                        feedback, score = st.session_state.interviewer.evaluate_answer(
-                            question=q_text,
-                            answer=answer_text,
-                            job_role=st.session_state.job_role,
-                            interview_type=st.session_state.interview_type,
-                            difficulty=st.session_state.difficulty,
-                        )
-                        # Pronunciation + communication analysis
-                        pron_report, comm_scores = st.session_state.interviewer.analyze_language(
-                            answer=answer_text,
-                            job_role=st.session_state.job_role,
-                        )
-                        follow_up = st.session_state.interviewer.generate_follow_up(q_text, answer_text)
-
-                        st.session_state.answers.append(answer_text)
-                        st.session_state.feedbacks.append(feedback)
-                        st.session_state.scores.append(score)
-                        st.session_state.pronunciation_reports.append(pron_report)
-                        st.session_state.communication_scores.append(comm_scores)
-                        st.session_state.follow_ups.append(follow_up)
-                        st.session_state.current_q += 1
-                        st.session_state.q_start_time = time.time()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ {e}")
-
-    with col_skip:
-        if st.button("⏭ Skip", use_container_width=True):
-            st.session_state.answers.append("[Skipped]")
-            st.session_state.feedbacks.append("Skipped — no feedback.")
-            st.session_state.scores.append(0)
-            st.session_state.pronunciation_reports.append({})
-            st.session_state.communication_scores.append({})
-            st.session_state.follow_ups.append("")
-            st.session_state.current_q += 1
-            st.session_state.q_start_time = time.time()
-            st.rerun()
-
-    with col_hint:
-        if st.button("💡 Hint", use_container_width=True):
-            with st.spinner("Generating hint..."):
-                try:
-                    hint = st.session_state.interviewer.get_hint(q_text, st.session_state.job_role)
-                    st.info(f"💡 {hint}")
-                except Exception as e:
-                    st.error(str(e))
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PHASE: RESULTS
-# ═══════════════════════════════════════════════════════════════════════════════
-elif st.session_state.phase == "results":
-    scores = st.session_state.scores
-    avg_score = sum(scores) / len(scores) if scores else 0
-    total_time = getattr(st.session_state, 'total_time', 0)
-    badge, _, badge_desc = get_performance_badge(avg_score)
-
-    score_color = (
-        "var(--c4)" if avg_score >= 80 else
-        "var(--c1)" if avg_score >= 60 else
-        "var(--c5)" if avg_score >= 40 else "var(--c3)"
-    )
-    ring_bg = (
-        "rgba(52,211,153,0.1)" if avg_score >= 80 else
-        "rgba(110,231,247,0.1)" if avg_score >= 60 else
-        "rgba(251,191,36,0.1)" if avg_score >= 40 else "rgba(244,114,182,0.1)"
-    )
-
-    # ── Report Hero ────────────────────────────────────────────────────────────
-    st.markdown(f"""
-    <div class="report-hero fade-up">
-      <div class="report-hero-orb"></div>
-      <div style="font-family:'Playfair Display',serif;font-size:0.85rem;font-weight:700;
-                  text-transform:uppercase;letter-spacing:0.15em;color:var(--muted);margin-bottom:0.5rem;">
-        Interview Complete
-      </div>
-      <div style="font-family:'Playfair Display',serif;font-size:2.8rem;font-weight:800;color:var(--text);">
-        Performance Report
-      </div>
-      <div style="color:var(--muted);margin-top:0.5rem;font-size:0.9rem;">
-        {st.session_state.job_role} · {st.session_state.interview_type} · {st.session_state.difficulty}
-      </div>
-      <div style="
-        width:160px; height:160px; border-radius:50%; margin:2rem auto 1rem;
-        background:{ring_bg}; border:3px solid {score_color};
-        display:flex; flex-direction:column; align-items:center; justify-content:center;
-      ">
-        <div style="font-family:'Playfair Display',serif;font-size:3.5rem;font-weight:800;
-                    color:{score_color};line-height:1;">{avg_score:.0f}</div>
-        <div style="color:var(--muted);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.1em;">/100</div>
-      </div>
-      <div style="font-size:1.5rem;margin-bottom:0.25rem;">{badge}</div>
-      <div style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:{score_color};">{badge_desc}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Metrics Row ────────────────────────────────────────────────────────────
-    m1, m2, m3, m4 = st.columns(4)
-    with m1: st.metric("Overall Score", f"{avg_score:.0f}/100")
-    with m2: st.metric("Questions", len(scores))
-    with m3: st.metric("Time Taken", f"{int(total_time//60)}m {int(total_time%60)}s")
-    with m4:
-        avg_comm = 0
-        if st.session_state.communication_scores:
-            valid = [c for c in st.session_state.communication_scores if c]
-            if valid:
-                all_vals = [v for c in valid for v in c.values() if isinstance(v, (int, float))]
-                avg_comm = sum(all_vals) / len(all_vals) if all_vals else 0
-        st.metric("Communication", f"{avg_comm:.0f}/100")
-
-    st.markdown("---")
-
-    # ── Detail Tabs ────────────────────────────────────────────────────────────
-    tab_qa, tab_pronun, tab_comm, tab_scores_tab, tab_summary = st.tabs([
-        "📝 Q&A Review",
-        "🗣️ Pronunciation",
-        "📡 Communication",
-        "📊 Score Analysis",
-        "🎯 AI Summary"
-    ])
-
-    # ── Q&A Review ─────────────────────────────────────────────────────────────
-    with tab_qa:
-        for i, (q, ans, fb, score, fu) in enumerate(zip(
-            st.session_state.questions, st.session_state.answers,
-            st.session_state.feedbacks, st.session_state.scores,
-            st.session_state.follow_ups
-        )):
-            sc = "var(--c4)" if score >= 80 else "var(--c1)" if score >= 60 else "var(--c5)" if score >= 40 else "var(--c3)"
-            fb_cls = "fb-excellent" if score >= 80 else "fb-good" if score >= 60 else "fb-average" if score >= 40 else "fb-poor"
-            with st.expander(f"Q{i+1} — Score: {score}/100  |  {q[:65]}{'...' if len(q)>65 else ''}"):
-                st.markdown(f"""
-                <div class="question-panel" style="margin-bottom:1rem;">
-                  <div class="q-badge">Question {i+1}</div>
-                  <div style="color:var(--text);font-size:1.05rem;line-height:1.65;">{q}</div>
-                </div>
-                <div style="margin-bottom:1rem;">
-                  <div class="card-label" style="margin-bottom:0.4rem;">Your Answer</div>
-                  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;
-                               padding:1rem;color:var(--text);font-size:0.95rem;line-height:1.7;">
-                    {ans if ans != '[Skipped]' else '<em style="color:var(--muted)">Skipped</em>'}
-                  </div>
-                </div>
-                <div class="fb-panel {fb_cls}">
-                  <div class="fb-score" style="color:{sc};">{score}/100</div>
-                  <div style="color:var(--muted);font-size:0.78rem;margin-bottom:0.75rem;">Content & Answer Quality</div>
-                  <div style="color:var(--text);line-height:1.75;font-size:0.95rem;">{fb}</div>
-                </div>
-                """, unsafe_allow_html=True)
-                if fu:
-                    st.markdown(f"""
-                    <div class="glass-card" style="border-color:rgba(110,231,247,0.2);background:rgba(110,231,247,0.04);margin-top:0.75rem;">
-                      <div style="color:var(--c1);font-size:0.75rem;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.5rem;">
-                        🔄 Follow-up Question
-                      </div>
-                      <div style="color:var(--text);font-size:0.95rem;">{fu}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-    # ── Pronunciation Tab ──────────────────────────────────────────────────────
-    with tab_pronun:
-        st.markdown("""
-        <div style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:800;margin-bottom:0.25rem;">
-          Pronunciation & Language Coach
-        </div>
-        <div style="color:var(--muted);font-size:0.88rem;margin-bottom:1.5rem;">
-          Detailed analysis of your language, word choice, and pronunciation patterns.
-        </div>
-        """, unsafe_allow_html=True)
-
-        pron_reports = st.session_state.pronunciation_reports
-        for i, (pr, ans) in enumerate(zip(pron_reports, st.session_state.answers)):
-            if not pr or ans == "[Skipped]":
-                continue
-            with st.expander(f"Q{i+1} — Pronunciation Analysis"):
-                if isinstance(pr, dict):
-                    # Overall language score
-                    lang_score = pr.get("language_score", 70)
-                    sc = "var(--c4)" if lang_score >= 80 else "var(--c1)" if lang_score >= 60 else "var(--c5)"
-                    st.markdown(f"""
-                    <div class="pronun-box">
-                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                        <div>
-                          <div class="card-label">Language Quality Score</div>
-                          <div style="font-family:'DM Mono',monospace;font-size:2rem;font-weight:700;color:{sc};">{lang_score}/100</div>
-                        </div>
-                        <div style="text-align:right;">
-                          <div class="card-label">Clarity</div>
-                          <div style="font-size:1.2rem;font-weight:700;color:var(--c2);">{pr.get('clarity', 'N/A')}</div>
-                        </div>
-                      </div>
-                    """, unsafe_allow_html=True)
-
-                    # Mispronounced/misused words
-                    corrections = pr.get("corrections", [])
-                    if corrections:
-                        st.markdown(f"""
-                        <div class="fb-section-title" style="color:var(--c3);">⚠️ Words to Improve</div>
-                        """, unsafe_allow_html=True)
-                        for c in corrections[:8]:
-                            if isinstance(c, dict):
-                                st.markdown(f"""
-                                <div class="pronunciation-item">
-                                  <div style="flex:1;">
-                                    <div style="margin-bottom:0.25rem;">
-                                      <span class="wrong-word">{c.get('word','')}</span>
-                                      <span style="color:var(--muted);margin:0 0.5rem;">→</span>
-                                      <span class="correct-word">{c.get('correct','')}</span>
-                                    </div>
-                                    <div style="color:var(--muted);font-size:0.82rem;">{c.get('tip','')}</div>
-                                    {f'<div class="phonetic" style="margin-top:0.4rem;">{c.get("phonetic","")}</div>' if c.get('phonetic') else ''}
-                                  </div>
-                                </div>
-                                """, unsafe_allow_html=True)
-
-                    # Good phrases
-                    good = pr.get("good_phrases", [])
-                    if good:
-                        st.markdown(f'<div class="fb-section-title" style="color:var(--c4);">✅ Strong Language Used</div>', unsafe_allow_html=True)
-                        for g in good[:5]:
-                            st.markdown(f'<span class="chip chip-green" style="margin:0.2rem;">{g}</span>', unsafe_allow_html=True)
-
-                    # Filler words
-                    fillers = pr.get("filler_words", [])
-                    if fillers:
-                        st.markdown(f'<div class="fb-section-title" style="color:var(--c5);">⚡ Filler Words Detected</div>', unsafe_allow_html=True)
-                        for f in fillers:
-                            st.markdown(f'<span class="chip chip-amber" style="margin:0.2rem;">{f}</span>', unsafe_allow_html=True)
-                        st.markdown('<div style="color:var(--muted);font-size:0.82rem;margin-top:0.5rem;">Try to reduce filler words — they signal hesitation.</div>', unsafe_allow_html=True)
-
-                    # Overall tip
-                    tip = pr.get("overall_tip", "")
-                    if tip:
-                        st.markdown(f"""
-                        <div style="background:rgba(167,139,250,0.08);border:1px solid rgba(167,139,250,0.2);
-                                     border-radius:10px;padding:1rem;margin-top:1rem;">
-                          <div style="color:var(--c2);font-weight:700;font-size:0.82rem;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.3rem;">
-                            🎯 Key Recommendation
-                          </div>
-                          <div style="color:var(--text);font-size:0.92rem;line-height:1.6;">{tip}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
+        col_a, col_b, col_c = st.columns([1, 1, 2])
+        with col_a:
+            if st.button("✓  Submit Answer", use_container_width=True):
+                if not answer.strip():
+                    st.warning("Please enter an answer before submitting.")
                 else:
-                    st.markdown(f'<div style="color:var(--text);line-height:1.7;">{pr}</div>', unsafe_allow_html=True)
+                    with st.spinner("Evaluating…"):
+                        try:
+                            ev = evaluate_answer(q, answer)
+                            st.session_state.answers.append(answer)
+                            st.session_state.evaluations.append(ev)
+                            st.session_state.current_q += 1
+                            if st.session_state.current_q >= total:
+                                st.session_state.step = 2
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Evaluation failed: {e}")
+        with col_b:
+            if st.button("⏭  Skip Question", use_container_width=True):
+                st.session_state.answers.append("[Skipped]")
+                st.session_state.evaluations.append({
+                    "confidence_score": 0, "keyword_coverage": 0,
+                    "accuracy_score": 0, "overall_score": 0,
+                    "covered_keywords": [], "missing_keywords": q.get("key_concepts", []),
+                    "strengths": "—", "improvements": "Question was skipped.",
+                    "detailed_feedback": "No answer provided."
+                })
+                st.session_state.current_q += 1
+                if st.session_state.current_q >= total:
+                    st.session_state.step = 2
+                st.rerun()
 
-    # ── Communication Tab ──────────────────────────────────────────────────────
-    with tab_comm:
-        st.markdown("""
-        <div style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:800;margin-bottom:0.25rem;">
-          Communication Skills Analysis
-        </div>
-        <div style="color:var(--muted);font-size:0.88rem;margin-bottom:1.5rem;">
-          Breakdown of your overall communication effectiveness across all answers.
-        </div>
-        """, unsafe_allow_html=True)
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 2 — RESULTS
+# ══════════════════════════════════════════════════════════════════════════════
+def page_results():
+    render_steps()
+    evs = st.session_state.evaluations
+    qs  = st.session_state.questions
+    ans = st.session_state.answers
+    role = st.session_state.role
 
-        comm_scores_list = st.session_state.communication_scores
-        valid_comm = [c for c in comm_scores_list if c and isinstance(c, dict)]
+    if not evs:
+        st.warning("No evaluations found.")
+        return
 
-        if valid_comm:
-            # Aggregate scores
-            dims = ["clarity", "confidence", "vocabulary", "structure", "conciseness", "professionalism"]
-            dim_labels = {
-                "clarity": "Clarity & Articulation",
-                "confidence": "Confidence & Tone",
-                "vocabulary": "Vocabulary & Word Choice",
-                "structure": "Answer Structure",
-                "conciseness": "Conciseness",
-                "professionalism": "Professionalism",
-            }
-            agg = {}
-            for dim in dims:
-                vals = [c.get(dim, 0) for c in valid_comm if isinstance(c.get(dim, 0), (int, float))]
-                agg[dim] = sum(vals) / len(vals) if vals else 0
+    scores = [e.get("overall_score", 0) for e in evs]
+    avg_overall    = sum(scores) / len(scores)
+    avg_confidence = sum(e.get("confidence_score", 0) for e in evs) / len(evs)
+    avg_keyword    = sum(e.get("keyword_coverage", 0) for e in evs) / len(evs)
+    avg_accuracy   = sum(e.get("accuracy_score", 0) for e in evs) / len(evs)
 
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.markdown('<div style="font-family:\'Playfair Display\',serif;font-size:1.1rem;font-weight:800;margin-bottom:1.25rem;">📡 Average Communication Scores</div>', unsafe_allow_html=True)
+    # ── Hero score ──
+    st.markdown(f"""
+<div style="text-align:center;padding:1rem 0 .5rem">
+  <div style="font-family:'DM Mono',monospace;font-size:.72rem;letter-spacing:.2em;
+       color:#10b981;margin-bottom:.5rem">INTERVIEW COMPLETE</div>
+  <div style="font-size:clamp(1.8rem,4vw,3rem);font-weight:800;letter-spacing:-.03em;
+       background:linear-gradient(135deg,#e8eaf0,#6366f1);
+       -webkit-background-clip:text;-webkit-text-fill-color:transparent">
+    {role}
+  </div>
+</div>""", unsafe_allow_html=True)
 
-            for dim, label in dim_labels.items():
-                val = agg.get(dim, 0)
-                bar_color = (
-                    "linear-gradient(90deg,#34d399,#6ee7f7)" if val >= 75 else
-                    "linear-gradient(90deg,#a78bfa,#6ee7f7)" if val >= 55 else
-                    "linear-gradient(90deg,#fbbf24,#f59e0b)" if val >= 40 else
-                    "linear-gradient(90deg,#f472b6,#ef4444)"
-                )
-                st.markdown(f"""
-                <div class="comm-bar-wrap">
-                  <div class="comm-bar-label">
-                    <span>{label}</span>
-                    <span style="color:{'#34d399' if val>=75 else '#6ee7f7' if val>=55 else '#fbbf24' if val>=40 else '#f472b6'};font-family:'DM Mono',monospace;">{val:.0f}/100</span>
-                  </div>
-                  <div class="comm-bar-track">
-                    <div class="comm-bar-fill" style="width:{val}%;background:{bar_color};"></div>
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # Per-question communication breakdown
-            st.markdown('<div style="font-family:\'Playfair Display\',serif;font-size:1.1rem;font-weight:800;margin:1.5rem 0 0.75rem;">Per-Question Breakdown</div>', unsafe_allow_html=True)
-            for i, (cs, ans) in enumerate(zip(comm_scores_list, st.session_state.answers)):
-                if not cs or ans == "[Skipped]":
-                    continue
-                with st.expander(f"Q{i+1} — Communication Details"):
-                    c1_, c2_, c3_ = st.columns(3)
-                    pairs = list(cs.items())[:6]
-                    for j, (k, v) in enumerate(pairs):
-                        col = [c1_, c2_, c3_][j % 3]
-                        with col:
-                            if isinstance(v, (int, float)):
-                                vc = "#34d399" if v >= 75 else "#6ee7f7" if v >= 55 else "#fbbf24" if v >= 40 else "#f472b6"
-                                st.markdown(f"""
-                                <div style="text-align:center;padding:0.75rem;background:var(--bg2);
-                                             border-radius:10px;border:1px solid var(--border);margin-bottom:0.5rem;">
-                                  <div style="font-size:1.5rem;font-weight:800;color:{vc};font-family:'DM Mono',monospace;">{v:.0f}</div>
-                                  <div style="color:var(--muted);font-size:0.75rem;text-transform:capitalize;">{k.replace('_',' ')}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-        else:
-            st.info("💡 Communication scores will appear here after submitting answers.")
-
-    # ── Score Analysis Tab ─────────────────────────────────────────────────────
-    with tab_scores_tab:
-        st.markdown('<div style="color:var(--muted);font-size:0.88rem;margin-bottom:1rem;">Score per question (out of 100)</div>', unsafe_allow_html=True)
-        score_data = {f"Q{i+1}": s for i, s in enumerate(scores)}
-        st.bar_chart(score_data, color="#a78bfa", height=280)
-
-        col_dist, col_stats = st.columns(2)
-        with col_dist:
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.markdown('<div style="font-weight:800;margin-bottom:1rem;">Score Distribution</div>', unsafe_allow_html=True)
-            buckets = [("🏆 Excellent (80–100)", 80, 101, "#34d399"),
-                       ("✅ Good (60–79)", 60, 80, "#6ee7f7"),
-                       ("📊 Average (40–59)", 40, 60, "#fbbf24"),
-                       ("📌 Needs Work (<40)", 0, 40, "#f472b6")]
-            for label, lo, hi, color in buckets:
-                count = sum(1 for s in scores if lo <= s < hi)
-                pct = (count / len(scores) * 100) if scores else 0
-                st.markdown(f"""
-                <div style="margin-bottom:0.75rem;">
-                  <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.25rem;">
-                    <span style="color:var(--muted);">{label}</span>
-                    <span style="color:{color};font-weight:700;">{count}</span>
-                  </div>
-                  <div class="prog-wrap" style="margin:0;">
-                    <div class="prog-fill" style="width:{pct}%;background:linear-gradient(90deg,{color},{color}88);"></div>
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        with col_stats:
-            best_i = scores.index(max(scores)) + 1 if scores else 0
-            worst_i = scores.index(min(scores)) + 1 if scores else 0
+    # ── Four metric rings ──
+    cols = st.columns(4)
+    for col, (val, lbl) in zip(cols, [
+        (int(avg_overall), "Overall"),
+        (int(avg_confidence), "Confidence"),
+        (int(avg_keyword), "Keywords"),
+        (int(avg_accuracy), "Accuracy"),
+    ]):
+        with col:
             st.markdown(f"""
-            <div class="glass-card">
-              <div style="font-weight:800;margin-bottom:1rem;">Highlights</div>
-              <div style="display:grid;gap:0.75rem;">
-                <div style="background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.2);border-radius:10px;padding:1rem;">
-                  <div style="color:var(--c4);font-size:0.75rem;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.25rem;">🏆 Best Answer</div>
-                  <div style="font-size:1.3rem;font-weight:800;">Q{best_i} — {max(scores) if scores else 0}/100</div>
-                </div>
-                <div style="background:rgba(244,114,182,0.08);border:1px solid rgba(244,114,182,0.2);border-radius:10px;padding:1rem;">
-                  <div style="color:var(--c3);font-size:0.75rem;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.25rem;">📌 Needs Most Work</div>
-                  <div style="font-size:1.3rem;font-weight:800;">Q{worst_i} — {min(scores) if scores else 0}/100</div>
-                </div>
-                <div style="background:rgba(167,139,250,0.08);border:1px solid rgba(167,139,250,0.2);border-radius:10px;padding:1rem;">
-                  <div style="color:var(--c2);font-size:0.75rem;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.25rem;">📈 Score Range</div>
-                  <div style="font-size:1.3rem;font-weight:800;">±{(max(scores)-min(scores)) if scores else 0} pts</div>
-                </div>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div class="glass-card" style="text-align:center;animation-delay:{cols.index(col)*.1}s">
+  {score_ring_svg(int(val), size=100, label=lbl)}
+  <div style="font-family:'DM Mono',monospace;font-size:.65rem;letter-spacing:.1em;
+       color:{score_color(int(val))};margin-top:.3rem">{score_label(int(val))}</div>
+</div>""", unsafe_allow_html=True)
 
-    # ── Summary Tab ────────────────────────────────────────────────────────────
-    with tab_summary:
-        if not st.session_state.cached_summary:
-            with st.spinner("🤖 Generating comprehensive performance summary..."):
-                try:
-                    st.session_state.cached_summary = st.session_state.interviewer.generate_summary(
-                        questions=st.session_state.questions,
-                        answers=st.session_state.answers,
-                        scores=st.session_state.scores,
-                        job_role=st.session_state.job_role,
-                        interview_type=st.session_state.interview_type,
-                    )
-                except Exception as e:
-                    st.session_state.cached_summary = f"Could not generate summary: {e}"
+    # ── AI Summary ──
+    st.markdown('<div class="fancy-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<p class="section-label">🤖 AI Performance Summary</p>', unsafe_allow_html=True)
+    with st.spinner("Generating summary…"):
+        try:
+            summary = generate_summary(evs, role)
+        except:
+            summary = "Summary unavailable."
+    st.markdown(f'<div class="fb-block">{summary}</div>', unsafe_allow_html=True)
 
-        st.markdown(f"""
-        <div class="fb-panel fb-good" style="margin-top:1rem;">
-          <div style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:800;
-                      margin-bottom:1rem;color:var(--c2);">🎯 AI Performance Summary</div>
-          <div style="color:var(--text);line-height:1.85;font-size:0.97rem;
-                      white-space:pre-wrap;">{st.session_state.cached_summary}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    # ── Per-question breakdown ──
+    st.markdown('<div class="fancy-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<p class="section-label">📋 Question-by-Question Breakdown</p>', unsafe_allow_html=True)
 
-    # ── Footer Actions ─────────────────────────────────────────────────────────
-    st.markdown("---")
-    col_new, col_dl = st.columns(2)
-    with col_new:
-        if st.button("🔄 Start New Interview", use_container_width=True):
-            for k in list(st.session_state.keys()):
-                del st.session_state[k]
+    for i, (q, ev, a) in enumerate(zip(qs, evs, ans)):
+        sc = ev.get("overall_score", 0)
+        color = score_color(sc)
+        with st.expander(f"Q{i+1} · {q['question'][:65]}… · Score: {sc}/100"):
+            c1, c2 = st.columns([.65, .35])
+            with c1:
+                st.markdown(f'<div class="q-bubble" style="font-size:.92rem">{q["question"]}</div>',
+                            unsafe_allow_html=True)
+                st.markdown(f"""
+<div style="margin-top:.9rem">
+  <div style="font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.15em;
+       color:rgba(232,234,240,.4);text-transform:uppercase;margin-bottom:.4rem">Your Answer</div>
+  <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);
+       border-radius:10px;padding:.9rem 1rem;font-size:.88rem;line-height:1.6;
+       font-family:'DM Mono',monospace;color:rgba(232,234,240,.75)">{a if a != "[Skipped]" else "<em>Skipped</em>"}</div>
+</div>""", unsafe_allow_html=True)
+
+                # Keywords
+                covered = ev.get("covered_keywords", [])
+                missing = ev.get("missing_keywords", [])
+                st.markdown("""
+<div style="margin-top:1rem">
+  <div style="font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.15em;
+       color:rgba(232,234,240,.4);text-transform:uppercase;margin-bottom:.4rem">Keywords</div>
+  <div class="chip-row">""", unsafe_allow_html=True)
+                chips = ""
+                for kw in covered:
+                    chips += f'<span class="chip chip-ok">✓ {kw}</span>'
+                for kw in missing:
+                    chips += f'<span class="chip chip-miss">✗ {kw}</span>'
+                st.markdown(f'{chips}</div></div>', unsafe_allow_html=True)
+
+                # Feedback
+                st.markdown(f"""
+<div style="margin-top:1rem">
+  <div style="font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.15em;
+       color:rgba(232,234,240,.4);text-transform:uppercase;margin-bottom:.4rem">Feedback</div>
+  <div class="fb-block">{ev.get('detailed_feedback','')}</div>
+</div>""", unsafe_allow_html=True)
+
+            with c2:
+                # Mini score rings
+                for metric, key in [("Overall","overall_score"),("Confidence","confidence_score"),
+                                     ("Keywords","keyword_coverage"),("Accuracy","accuracy_score")]:
+                    val = ev.get(key, 0)
+                    st.markdown(f"""
+<div style="display:flex;align-items:center;gap:.7rem;margin-bottom:.7rem;
+     background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);
+     border-radius:10px;padding:.5rem .8rem">
+  {score_ring_svg(val, size=50, label="")}
+  <div>
+    <div style="font-size:.82rem;font-weight:600">{val}<span style="font-size:.65rem;color:rgba(232,234,240,.4)">/100</span></div>
+    <div style="font-family:'DM Mono',monospace;font-size:.62rem;color:rgba(232,234,240,.4)">{metric}</div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+                # Strengths / Improvements
+                st.markdown(f"""
+<div style="margin-top:.4rem">
+  <div style="font-family:'DM Mono',monospace;font-size:.64rem;color:#10b981;
+       letter-spacing:.1em;margin-bottom:.3rem">STRENGTH</div>
+  <div style="font-size:.8rem;color:rgba(232,234,240,.75);line-height:1.5">{ev.get('strengths','')}</div>
+  <div style="font-family:'DM Mono',monospace;font-size:.64rem;color:#f59e0b;
+       letter-spacing:.1em;margin:.6rem 0 .3rem">IMPROVE</div>
+  <div style="font-size:.8rem;color:rgba(232,234,240,.75);line-height:1.5">{ev.get('improvements','')}</div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Actions ──
+    st.markdown('<div class="fancy-divider"></div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("🔄  New Interview", use_container_width=True):
+            for k in ["questions","answers","evaluations","step","current_q"]:
+                st.session_state[k] = defaults[k]
             st.rerun()
-    with col_dl:
-        lines = [
-            "=" * 60,
-            "VOICECOACH AI — PERFORMANCE REPORT",
-            "=" * 60,
-            f"Role: {st.session_state.job_role}",
-            f"Type: {st.session_state.interview_type}",
-            f"Difficulty: {st.session_state.difficulty}",
-            f"Overall Score: {avg_score:.0f}/100",
-            f"Badge: {badge_desc}",
-            "=" * 60,
-        ]
-        for i, (q, ans, fb, score) in enumerate(zip(
-            st.session_state.questions, st.session_state.answers,
-            st.session_state.feedbacks, st.session_state.scores
-        )):
-            lines += [f"\nQ{i+1} [{score}/100]: {q}", f"Answer: {ans}", f"Feedback: {fb}", "-"*40]
-        if st.session_state.cached_summary:
-            lines += ["\nOVERALL AI SUMMARY:", st.session_state.cached_summary]
-        st.download_button(
-            "📥 Download Full Report",
-            data="\n".join(lines),
-            file_name=f"voicecoach_report_{st.session_state.job_role.replace(' ','_')}.txt",
-            mime="text/plain",
-            use_container_width=True,
-        )
+    with c2:
+        if st.button("⚙  Change Config", use_container_width=True):
+            st.session_state.step = 0
+            st.session_state.questions = []
+            st.session_state.answers = []
+            st.session_state.evaluations = []
+            st.rerun()
+    with c3:
+        # Export as text
+        report = f"AI INTERVIEW REPORT\n{'='*50}\n"
+        report += f"Role: {role} | Domain: {st.session_state.domain}\n"
+        report += f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        report += f"OVERALL SCORE: {avg_overall:.0f}/100\n\n"
+        for i, (q, ev, a) in enumerate(zip(qs, evs, ans)):
+            report += f"Q{i+1}: {q['question']}\nAnswer: {a}\nScore: {ev.get('overall_score',0)}/100\nFeedback: {ev.get('detailed_feedback','')}\n\n"
+        st.download_button("📥  Export Report", report, file_name="interview_report.txt",
+                           mime="text/plain", use_container_width=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown("""
+<div class="hero">
+  <div class="hero-badge">AI · POWERED · INTERVIEW SIMULATOR</div>
+  <h1>Ace Your Next<br>Technical Interview</h1>
+  <p>Groq LLaMA 3.3 · Real-time evaluation · Semantic scoring</p>
+</div>
+""", unsafe_allow_html=True)
+
+step = st.session_state.step
+if step == 0:
+    page_config()
+elif step == 1:
+    page_interview()
+elif step == 2:
+    page_results()
